@@ -12,7 +12,7 @@ import unittest
 @unittest.skipUnless(importlib.util.find_spec("mcp"), "Install project on Pi/CI for MCP transport tests")
 class MCPTests(unittest.TestCase):
     def test_stdio_images_commands_and_hardware_tool_catalog(self):
-        asyncio.run(self.scenario())
+        asyncio.run(asyncio.wait_for(self.scenario(), 60))
 
     async def scenario(self):
         from mcp import ClientSession, StdioServerParameters

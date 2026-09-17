@@ -41,6 +41,7 @@ class Runtime:
     def __init__(self, config):
         self.config = config
         self.mutex = threading.RLock()
+        self.log_mutex = threading.Lock()
         self.stack = ExitStack()
         self.arm = None
         self.cameras = None
@@ -57,7 +58,7 @@ class Runtime:
             raise
 
     def log(self, event, data):
-        with (self.directory / "events.jsonl").open("a") as stream:
+        with self.log_mutex, (self.directory / "events.jsonl").open("a") as stream:
             stream.write(json.dumps({"time_unix_s": time.time(), "event": event, "data": data},
                                     allow_nan=False) + "\n")
 
@@ -86,11 +87,11 @@ class Runtime:
             self.log("state", state)
             return state
 
-    def observe(self):
+    def observe(self, include_arm=True):
         with self.mutex:
             start = time.monotonic()
             frames = self._cameras().capture()
-            state = self._arm().state()
+            state = self._arm().state() if include_arm else None
             if any(time.monotonic() - f.received_monotonic > self.config.camera_max_age_s for f in frames):
                 raise RuntimeError("Frames became stale while reading arm state; request a new observation")
             self.sequence += 1

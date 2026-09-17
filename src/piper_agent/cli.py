@@ -11,7 +11,7 @@ from .config import Config
 
 def main():
     parser = argparse.ArgumentParser(description="Piper X Codex tools; physical motion is unavailable in v0.1")
-    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "serve"])
+    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve"])
     parser.add_argument("--config", type=Path, help="Explicit TOML configuration (required except doctor/probe-cameras)")
     args = parser.parse_args()
     try:
@@ -50,7 +50,7 @@ def main():
                 if args.command == "probe-arm":
                     result = runtime.state()
                 else:
-                    result, _ = runtime.observe()
+                    result, _ = runtime.observe(include_arm=args.command != "snapshot-cameras")
                     result["run_directory_on_server"] = str(runtime.directory)
             print(json.dumps(result, indent=2))
     except (ImportError, OSError, ValueError, RuntimeError) as exc:

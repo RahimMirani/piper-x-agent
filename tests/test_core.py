@@ -65,6 +65,13 @@ class CoreTests(unittest.TestCase):
                     runtime.observe()
             self.assertEqual(runtime.sequence, 0)
 
+    def test_camera_snapshot_does_not_connect_arm(self):
+        with Runtime(self.config) as runtime:
+            metadata, frames = runtime.observe(include_arm=False)
+            self.assertIsNone(runtime.arm)
+            self.assertIsNone(metadata["state"])
+            self.assertEqual(len(frames), 2)
+
     def test_lock_excludes_second_process_owner_then_releases(self):
         path = self.root / "test.lock"
         with ProcessLock(path):
