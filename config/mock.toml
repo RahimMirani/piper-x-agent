@@ -1,0 +1,12 @@
+mode = "mock"
+run_directory = "../runs"
+camera_max_age_s = 1.0
+camera_timeout_s = 3.0
+
+[arm]
+channel = "can0"
+firmware = "v188"
+
+[cameras]
+scene_serial = "MOCK-SCENE"
+wrist_serial = "MOCK-WRIST"

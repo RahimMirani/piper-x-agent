@@ -1,0 +1,15 @@
+# Copy to config/local.toml on the Pi. Hardware mode is READ ONLY in v0.1.
+mode = "hardware_readonly"
+run_directory = "../runs"
+camera_max_age_s = 1.0
+camera_timeout_s = 5.0
+
+[arm]
+channel = "can0"
+# Historical setting from piper-x-arm; verify against the actual arm.
+firmware = "v188"
+
+[cameras]
+# Historical mapping from piper-x-arm/NOTION_PiPER_X.md; confirm by covering a lens.
+scene_serial = "CC1N16200TF"
+wrist_serial = "CC1N16200F9"
