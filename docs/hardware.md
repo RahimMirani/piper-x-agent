@@ -2,6 +2,10 @@
 
 Recorded from the user's existing `trc/repos/piper-x-arm` checkout on 2026-09-13.
 These are historical notes, not measurements from the current disconnected rig.
+See [Pi camera commissioning](pi-camera-check.md) for the subsequently verified
+camera installation and RGB checks. The remaining historical entries below
+still describe the earlier checkout.
+
 No private network addresses, credentials, old recordings, or vendor binaries
 were copied into this repository.
 

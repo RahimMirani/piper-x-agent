@@ -42,6 +42,8 @@ its purpose is to verify the interface before connecting equipment.
 Follow [Pi setup](docs/pi-setup.md), then [connect Codex](docs/codex.md).
 The [hardware notes](docs/hardware.md) record the camera identities found in the
 earlier `piper-x-arm` project. They must be confirmed against the physical rig.
+The [Pi camera commissioning record](docs/pi-camera-check.md) documents the
+verified installation, camera images and MCP checks, including one transient timeout.
 
 ## Tools
 

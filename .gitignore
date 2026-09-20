@@ -11,4 +11,5 @@ dist/
 config/local.toml
 config/codex.local.toml
 runs/
+Log/
 *.whl

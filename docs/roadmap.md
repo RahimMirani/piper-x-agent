@@ -10,8 +10,10 @@
 - Session event/image logging and a cooperating-process hardware lock.
 - Core tests and an MCP protocol test; GitHub Actions configuration.
 
-Implemented is not the same as hardware-validated. The Pi is currently off and
-the arm/cameras are disconnected. No physical behavior has been tested here.
+Implemented is not the same as hardware-validated. The Pi installation, full
+software tests, and short camera-only RGB/MCP sessions have now been checked;
+see [the camera commissioning record](pi-camera-check.md). Arm telemetry,
+calibration, depth and physical movement remain unverified.
 
 ## Verify on the Pi before connecting equipment
 
