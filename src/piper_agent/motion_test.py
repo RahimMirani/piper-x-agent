@@ -66,7 +66,11 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         # firmware/configuration operations are involved.
         robot.set_speed_percent(10)
         if not robot.enable():
-            raise RuntimeError("Arm did not report all joints enabled")
+            # Some firmware returns False when the joints were already enabled.
+            # Accept only an explicit all-six-enabled readback.
+            statuses = robot.get_joints_enable_status_list()
+            if statuses != [True] * 6:
+                raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
         robot.set_motion_mode("j")
 
         robot.move_j(target)
