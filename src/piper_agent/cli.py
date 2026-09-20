@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0", help="camera-web bind address")
     parser.add_argument("--port", type=int, default=8090, help="camera-web TCP port")
     parser.add_argument("--joint", type=int, default=1, help="motion-test joint number (1-6)")
-    parser.add_argument("--delta", type=float, default=0.02, help="motion-test/lateral-test offset in radians (max 0.02)")
+    parser.add_argument("--delta", type=float, default=0.02, help="motion-test/lateral-test offset in radians (max 0.2)")
     parser.add_argument("--timeout", type=float, default=8.0, help="motion-test convergence timeout")
     parser.add_argument("--confirm-motion-test", action="store_true", help="required before any physical motion")
     parser.add_argument("--config", type=Path, help="Explicit TOML configuration (required except doctor/probe-cameras)")

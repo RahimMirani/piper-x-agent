@@ -1,7 +1,8 @@
 """Explicit, supervised PiPER-X motion smoke test.
 
 This module is intentionally separate from the MCP server. It only performs a
-single-joint offset and return after an explicit CLI confirmation flag.
+single-joint offset and return, or a small lateral sweep, after an explicit CLI
+confirmation flag.
 """
 
 import math
@@ -11,27 +12,73 @@ _PIPER_X_LIMITS = ((-2.617994, 2.617994), (0.0, 3.141593),
                    (-2.96706, 0.0), (-1.553344, 1.553344),
                    (-1.553344, 1.553344), (-3.141593, 3.141593))
 
+# The SDK clamps every move_j target into the limits above and only prints a
+# warning, so a baseline read even slightly outside a limit silently becomes a
+# command that moves that joint to the boundary. The arm rests a couple of
+# degrees past the joint 2 and joint 3 boundaries with motors off, so refusing
+# outright would block every test. Allow a small excursion, command the clamped
+# pose deliberately, and report the shift. Anything larger means the arm model,
+# firmware profile or zeroing is wrong and must not be moved.
+_CLAMP_TOLERANCE_RAD = 0.05
 
-def _validate_pose_for_sdk(joints):
-    for index, (value, (lower, upper)) in enumerate(zip(joints, _PIPER_X_LIMITS), 1):
-        if not lower <= value <= upper:
+_SPEED_PERCENT = 10
+
+
+def _clamp_pose(joints):
+    """Return the pose move_j will actually command and the per-joint shift."""
+    clamped = [min(max(value, lower), upper)
+               for value, (lower, upper) in zip(joints, _PIPER_X_LIMITS)]
+    return clamped, [after - before for after, before in zip(clamped, joints)]
+
+
+def _commandable_pose(joints):
+    """Validate a feedback pose and return the pose the SDK will command."""
+    clamped, shift = _clamp_pose(joints)
+    for index, (value, offset, (lower, upper)) in enumerate(zip(joints, shift, _PIPER_X_LIMITS), 1):
+        if abs(offset) > _CLAMP_TOLERANCE_RAD:
             raise RuntimeError(
                 f"Refusing motion: joint {index} feedback {value:.6f} rad is "
-                f"outside PiPER-X SDK range [{lower:.6f}, {upper:.6f}]. "
+                f"{abs(offset):.6f} rad outside PiPER-X SDK range "
+                f"[{lower:.6f}, {upper:.6f}], and move_j would silently clamp it. "
                 "Verify the arm model/firmware zeroing before commanding motion."
             )
+    return clamped, shift
+
+
+def _arm_faults(robot):
+    """Return the arm's active fault names, or an empty list."""
+    status = robot.get_arm_status()
+    if status is None:
+        return []
+    faults = [name for name, value in vars(status.msg.err_status).items()
+              if value is True]
+    if int(getattr(status.msg, "err_code", 0) or 0):
+        faults.append(f"err_code={int(status.msg.err_code)}")
+    return faults
+
+
+def _assert_no_faults(robot, stage):
+    faults = _arm_faults(robot)
+    if faults:
+        raise RuntimeError(f"Arm reported faults {faults} {stage}")
 
 
 def _joint_feedback(robot, timeout):
+    """Return angles from a frame published during this call.
+
+    The SDK hands back a cached message, so the first readable frame may predate
+    the command under test. Require the timestamp to advance before trusting it.
+    """
     deadline = time.monotonic() + timeout
-    previous = None
+    initial = None
     while time.monotonic() < deadline:
         msg = robot.get_joint_angles()
         if msg is not None:
             stamp = msg.timestamp
-            if previous is None or stamp > previous:
+            if initial is None:
+                initial = stamp
+            elif stamp > initial:
                 return [float(v) for v in msg.msg], stamp
-            previous = stamp
         time.sleep(0.01)
     raise TimeoutError("No advancing joint feedback")
 
@@ -67,11 +114,70 @@ def _wait_target(robot, target, timeout, tolerance=0.01):
         previous = joints
         last = {"joints_rad": joints, "timestamp": stamp,
                 "max_error_rad": max(abs(a - b) for a, b in zip(joints, target))}
+        _assert_no_faults(robot, "while converging on a commanded pose")
         status = robot.get_arm_status()
+        # motion_status only separates reach-success from reach-failure; it is
+        # not a busy flag, so convergence rests on the measured error above.
         motion_done = status is not None and getattr(status.msg, "motion_status", None) == 0
         if motion_done and last["max_error_rad"] <= tolerance:
             return last
     raise TimeoutError(f"Target did not converge within {timeout:.1f}s; last={last}")
+
+
+def _connect(config):
+    from pyAgxArm import AgxArmFactory, ArmModel, create_agx_arm_config
+
+    sdk_config = create_agx_arm_config(robot=ArmModel.PIPER_X,
+                                       firmeware_version=config.firmware,
+                                       interface="socketcan", channel=config.channel)
+    return AgxArmFactory.create_arm(sdk_config)
+
+
+def _enable_and_baseline(robot):
+    """Enable at low speed, wait for a settled pose, return the commandable pose."""
+    _assert_no_faults(robot, "before enabling")
+    # Explicitly request a low speed. No gripper or firmware/configuration
+    # operations are involved.
+    robot.set_speed_percent(_SPEED_PERCENT)
+    # The SDK's enable() readback can race the six feedback frames. Poll the
+    # complete list for up to three seconds; never move on a partial enable.
+    robot.enable()
+    enabled = False
+    statuses = None
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        statuses = robot.get_joints_enable_status_list()
+        if statuses == [True] * 6:
+            enabled = True
+            break
+        time.sleep(0.1)
+    if not enabled:
+        raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
+
+    # Enabling can let the arm settle a few degrees as torque comes on.
+    # Establish the motion baseline only after that transient, so the return
+    # command does not ask for the pre-enable pose.
+    time.sleep(0.5)
+    measured, stamp = _stable_joint_feedback(robot, 4.0)
+    base, shift = _commandable_pose(measured)
+    _assert_no_faults(robot, "after enabling")
+    return measured, base, shift, stamp
+
+
+def _tolerance_for(delta):
+    return min(0.01, max(0.001, abs(float(delta)) * 0.25))
+
+
+# Raised from 0.02 rad (1.15 deg, barely visible) to 0.2 rad (11.5 deg) so a
+# supervised operator can see the arm move. This is a bounded smoke test in
+# clear space at _SPEED_PERCENT, not a licence for planned trajectories: there
+# is still no collision checking here.
+_MAX_DELTA_RAD = 0.2
+
+
+def _check_delta(delta):
+    if type(delta) not in (int, float) or not math.isfinite(delta) or not 0 < abs(delta) <= _MAX_DELTA_RAD:
+        raise ValueError(f"delta must be finite, nonzero, and at most {_MAX_DELTA_RAD} rad")
 
 
 def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
@@ -79,67 +185,40 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         raise ValueError("Motion test requires hardware_readonly configuration")
     if type(joint) is not int or not 1 <= joint <= 6:
         raise ValueError("joint must be an integer from 1 to 6")
-    if type(delta) not in (int, float) or not math.isfinite(delta) or not 0 < abs(delta) <= 0.02:
-        raise ValueError("delta must be finite, nonzero, and at most 0.02 rad")
+    _check_delta(delta)
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 2 <= timeout <= 30:
         raise ValueError("timeout must be between 2 and 30 seconds")
 
-    from pyAgxArm import AgxArmFactory, ArmModel, create_agx_arm_config
-
-    sdk_config = create_agx_arm_config(robot=ArmModel.PIPER_X,
-                                       firmeware_version=config.firmware,
-                                       interface="socketcan", channel=config.channel)
-    robot = AgxArmFactory.create_arm(sdk_config)
-    target = None
-    start = None
+    robot = _connect(config)
     try:
         robot.connect()
-        # Explicitly request a low speed and joint-space mode. No gripper or
-        # firmware/configuration operations are involved.
-        robot.set_speed_percent(10)
-        # The SDK's enable() readback can race the six feedback frames. Poll
-        # the complete list for up to three seconds; never move on a partial
-        # enable state.
-        robot.enable()
-        enabled = False
-        statuses = None
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            statuses = robot.get_joints_enable_status_list()
-            if statuses == [True] * 6:
-                enabled = True
-                break
-            time.sleep(0.1)
-        if not enabled:
-            raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
-
-        # Enabling can let the arm settle a few degrees as torque comes on.
-        # Establish the motion baseline only after that transient, so the
-        # return command does not ask for the pre-enable pose.
-        time.sleep(0.5)
-        start, start_stamp = _stable_joint_feedback(robot, 4.0)
-        _validate_pose_for_sdk(start)
-        target = start.copy()
+        measured, base, shift, start_stamp = _enable_and_baseline(robot)
+        target = base.copy()
         target[joint - 1] += float(delta)
         if any(abs(value) > 3.1 for value in target):
             raise ValueError("Refusing target too close to generic +/-3.1 rad safety envelope")
+        _commandable_pose(target)
 
         robot.set_motion_mode("j")
+        tolerance = _tolerance_for(delta)
 
         robot.move_j(target)
-        target_tolerance = min(0.01, max(0.001, abs(float(delta)) * 0.25))
-        outward = _wait_target(robot, target, timeout, tolerance=target_tolerance)
-        observed_delta = abs(outward["joints_rad"][joint - 1] - start[joint - 1])
+        outward = _wait_target(robot, target, timeout, tolerance=tolerance)
+        observed_delta = abs(outward["joints_rad"][joint - 1] - base[joint - 1])
         if observed_delta < abs(float(delta)) * 0.75:
             raise RuntimeError(
                 f"Commanded joint did not visibly move: requested={float(delta):.6f} "
                 f"observed={observed_delta:.6f} rad"
             )
-        robot.move_j(start)
-        returned = _wait_target(robot, start, timeout, tolerance=target_tolerance)
-        return {"joint": joint, "delta_rad": float(delta), "speed_percent": 10,
-                "start_joints_rad": start, "target_joints_rad": target,
+        robot.move_j(base)
+        returned = _wait_target(robot, base, timeout, tolerance=tolerance)
+        return {"joint": joint, "delta_rad": float(delta), "speed_percent": _SPEED_PERCENT,
+                "measured_start_joints_rad": measured,
+                "commanded_start_joints_rad": base,
+                "sdk_clamp_shift_rad": shift,
+                "target_joints_rad": target,
                 "returned_joints_rad": returned["joints_rad"],
+                "observed_delta_rad": observed_delta,
                 "start_timestamp": start_stamp, "outward": outward,
                 "return": returned, "physical_motion_supported": True}
     except BaseException:
@@ -158,31 +237,41 @@ def run_lateral_sweep(config, delta=0.02, timeout=8.0):
     """Yaw the whole arm left/right around its current pose, then return."""
     if config.mode != "hardware_readonly":
         raise ValueError("Lateral test requires hardware_readonly configuration")
-    if type(delta) not in (int, float) or not math.isfinite(delta) or not 0 < abs(delta) <= 0.02:
-        raise ValueError("delta must be finite, nonzero, and at most 0.02 rad")
-    from pyAgxArm import AgxArmFactory, ArmModel, create_agx_arm_config
+    _check_delta(delta)
 
-    sdk_config = create_agx_arm_config(robot=ArmModel.PIPER_X,
-                                       firmeware_version=config.firmware,
-                                       interface="socketcan", channel=config.channel)
-    robot = AgxArmFactory.create_arm(sdk_config)
+    robot = _connect(config)
     try:
-        robot.connect(); robot.reset(); time.sleep(1.0)
-        robot.set_speed_percent(10); robot.enable(); time.sleep(0.5)
-        base, _ = _stable_joint_feedback(robot, 4.0)
-        _validate_pose_for_sdk(base)
+        robot.connect()
+        measured, base, shift, _ = _enable_and_baseline(robot)
         left, right = base.copy(), base.copy()
-        left[0] -= float(delta); right[0] += float(delta)
+        left[0] -= float(delta)
+        right[0] += float(delta)
+        for pose in (left, right):
+            _commandable_pose(pose)
+
         robot.set_motion_mode("j")
-        robot.move_j(left); left_result = _wait_target(robot, left, timeout, tolerance=min(0.01, abs(delta) * .25))
-        robot.move_j(right); right_result = _wait_target(robot, right, timeout, tolerance=min(0.01, abs(delta) * .25))
-        robot.move_j(base); return_result = _wait_target(robot, base, timeout, tolerance=min(0.01, abs(delta) * .25))
-        return {"base_joints_rad": base, "left": left_result, "right": right_result,
-                "return": return_result, "delta_rad": float(delta),
-                "speed_percent": 10, "physical_motion_supported": True}
+        tolerance = _tolerance_for(delta)
+        legs = {}
+        for name, pose in (("left", left), ("right", right), ("return", base)):
+            robot.move_j(pose)
+            legs[name] = _wait_target(robot, pose, timeout, tolerance=tolerance)
+        swept = abs(legs["right"]["joints_rad"][0] - legs["left"]["joints_rad"][0])
+        if swept < abs(float(delta)) * 1.5:
+            raise RuntimeError(
+                f"Joint 1 did not sweep both ways: requested={2 * abs(float(delta)):.6f} "
+                f"observed={swept:.6f} rad"
+            )
+        return {"measured_base_joints_rad": measured,
+                "commanded_base_joints_rad": base,
+                "sdk_clamp_shift_rad": shift,
+                "left": legs["left"], "right": legs["right"], "return": legs["return"],
+                "observed_sweep_rad": swept, "delta_rad": float(delta),
+                "speed_percent": _SPEED_PERCENT, "physical_motion_supported": True}
     except BaseException:
-        try: robot.electronic_emergency_stop()
-        except Exception: pass
+        try:
+            robot.electronic_emergency_stop()
+        except Exception:
+            pass
         raise
     finally:
         robot.disconnect()
