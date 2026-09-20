@@ -137,3 +137,36 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         raise
     finally:
         robot.disconnect()
+
+
+def run_lateral_sweep(config, delta=0.02, timeout=8.0):
+    """Yaw the whole arm left/right around its current pose, then return."""
+    if config.mode != "hardware_readonly":
+        raise ValueError("Lateral test requires hardware_readonly configuration")
+    if type(delta) not in (int, float) or not math.isfinite(delta) or not 0 < abs(delta) <= 0.02:
+        raise ValueError("delta must be finite, nonzero, and at most 0.02 rad")
+    from pyAgxArm import AgxArmFactory, ArmModel, create_agx_arm_config
+
+    sdk_config = create_agx_arm_config(robot=ArmModel.PIPER_X,
+                                       firmeware_version=config.firmware,
+                                       interface="socketcan", channel=config.channel)
+    robot = AgxArmFactory.create_arm(sdk_config)
+    try:
+        robot.connect(); robot.reset(); time.sleep(1.0)
+        robot.set_speed_percent(10); robot.enable(); time.sleep(0.5)
+        base, _ = _stable_joint_feedback(robot, 4.0)
+        left, right = base.copy(), base.copy()
+        left[0] -= float(delta); right[0] += float(delta)
+        robot.set_motion_mode("j")
+        robot.move_j(left); left_result = _wait_target(robot, left, timeout, tolerance=min(0.01, abs(delta) * .25))
+        robot.move_j(right); right_result = _wait_target(robot, right, timeout, tolerance=min(0.01, abs(delta) * .25))
+        robot.move_j(base); return_result = _wait_target(robot, base, timeout, tolerance=min(0.01, abs(delta) * .25))
+        return {"base_joints_rad": base, "left": left_result, "right": right_result,
+                "return": return_result, "delta_rad": float(delta),
+                "speed_percent": 10, "physical_motion_supported": True}
+    except BaseException:
+        try: robot.electronic_emergency_stop()
+        except Exception: pass
+        raise
+    finally:
+        robot.disconnect()
