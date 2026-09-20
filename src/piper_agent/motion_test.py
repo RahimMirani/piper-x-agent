@@ -22,6 +22,23 @@ def _joint_feedback(robot, timeout):
     raise TimeoutError("No advancing joint feedback")
 
 
+def _stable_joint_feedback(robot, timeout):
+    """Return a baseline only after three coherent advancing frames."""
+    deadline = time.monotonic() + timeout
+    previous = None
+    stable = 0
+    while time.monotonic() < deadline:
+        joints, stamp = _joint_feedback(robot, min(0.5, max(0.05, deadline - time.monotonic())))
+        if previous is not None and max(abs(a - b) for a, b in zip(joints, previous)) <= 0.002:
+            stable += 1
+            if stable >= 3:
+                return joints, stamp
+        else:
+            stable = 0
+        previous = joints
+    raise TimeoutError("No coherent joint baseline within timeout")
+
+
 def _wait_target(robot, target, timeout, tolerance=0.01):
     deadline = time.monotonic() + timeout
     last = None
@@ -86,7 +103,7 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         # Establish the motion baseline only after that transient, so the
         # return command does not ask for the pre-enable pose.
         time.sleep(0.5)
-        start, start_stamp = _joint_feedback(robot, 3.0)
+        start, start_stamp = _stable_joint_feedback(robot, 4.0)
         target = start.copy()
         target[joint - 1] += float(delta)
         if any(abs(value) > 3.1 for value in target):
