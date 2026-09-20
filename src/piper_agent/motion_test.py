@@ -65,12 +65,21 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         # Explicitly request a low speed and joint-space mode. No gripper or
         # firmware/configuration operations are involved.
         robot.set_speed_percent(10)
-        if not robot.enable():
-            # Some firmware returns False when the joints were already enabled.
-            # Accept only an explicit all-six-enabled readback.
+        # The SDK's enable() readback can race the six feedback frames. Poll
+        # the complete list for up to three seconds; never move on a partial
+        # enable state.
+        robot.enable()
+        enabled = False
+        statuses = None
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
             statuses = robot.get_joints_enable_status_list()
-            if statuses != [True] * 6:
-                raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
+            if statuses == [True] * 6:
+                enabled = True
+                break
+            time.sleep(0.1)
+        if not enabled:
+            raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
         robot.set_motion_mode("j")
 
         robot.move_j(target)
