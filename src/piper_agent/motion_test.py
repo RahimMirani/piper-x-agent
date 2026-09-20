@@ -22,7 +22,7 @@ def _joint_feedback(robot, timeout):
     raise TimeoutError("No advancing joint feedback")
 
 
-def _wait_target(robot, target, timeout):
+def _wait_target(robot, target, timeout, tolerance=0.01):
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -31,7 +31,7 @@ def _wait_target(robot, target, timeout):
                 "max_error_rad": max(abs(a - b) for a, b in zip(joints, target))}
         status = robot.get_arm_status()
         motion_done = status is not None and getattr(status.msg, "motion_status", None) == 0
-        if motion_done and last["max_error_rad"] <= 0.01:
+        if motion_done and last["max_error_rad"] <= tolerance:
             return last
     raise TimeoutError(f"Target did not converge within {timeout:.1f}s; last={last}")
 
@@ -88,9 +88,16 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         robot.set_motion_mode("j")
 
         robot.move_j(target)
-        outward = _wait_target(robot, target, timeout)
+        target_tolerance = min(0.01, max(0.001, abs(float(delta)) * 0.25))
+        outward = _wait_target(robot, target, timeout, tolerance=target_tolerance)
+        observed_delta = abs(outward["joints_rad"][joint - 1] - start[joint - 1])
+        if observed_delta < abs(float(delta)) * 0.75:
+            raise RuntimeError(
+                f"Commanded joint did not visibly move: requested={float(delta):.6f} "
+                f"observed={observed_delta:.6f} rad"
+            )
         robot.move_j(start)
-        returned = _wait_target(robot, start, timeout)
+        returned = _wait_target(robot, start, timeout, tolerance=target_tolerance)
         return {"joint": joint, "delta_rad": float(delta), "speed_percent": 10,
                 "start_joints_rad": start, "target_joints_rad": target,
                 "returned_joints_rad": returned["joints_rad"],
