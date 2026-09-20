@@ -10,10 +10,15 @@
 - Session event/image logging and a cooperating-process hardware lock.
 - Core tests and an MCP protocol test; GitHub Actions configuration.
 
+- Supervised CLI-only motion and gripper smoke tests behind `--confirm-motion-test`.
+
 Implemented is not the same as hardware-validated. The Pi installation, full
-software tests, and short camera-only RGB/MCP sessions have now been checked;
-see [the camera commissioning record](pi-camera-check.md). Arm telemetry,
-calibration, depth and physical movement remain unverified.
+software tests, and short camera-only RGB/MCP sessions have been checked; see
+[the camera commissioning record](pi-camera-check.md). Arm telemetry, a bounded
+single-joint move, a lateral sweep and a gripper open/close have now also been
+measured on the physical arm; see [the arm commissioning record](pi-motion-check.md).
+Calibration, depth, joint signs/zeros for joints 2-6, grasping and any
+collision-aware motion remain unverified.
 
 ## Verify on the Pi before connecting equipment
 
@@ -39,8 +44,10 @@ Verify timeout/disconnection behavior on the actual controller. A joint step
 limit alone is not collision avoidance and a software stop is not an E-stop.
 
 Start physical tests with a supervised small joint movement in clear space,
-then a gripper action, then calibrated Cartesian movements. Do not treat the
-mock's +/- pi range or 0.07 m aperture as validated hardware limits.
+then a gripper action, then calibrated Cartesian movements. The first two are
+done and recorded; calibrated Cartesian movement is not. Do not treat the mock's
++/- pi range or 0.07 m aperture as validated hardware limits, and note that the
+SDK silently clamps out-of-range joint targets rather than rejecting them.
 
 Finally attempt one large block into a bowl, logging observations and results.
 No training dataset is required for the initial tool-driven experiment, but

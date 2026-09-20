@@ -4,10 +4,15 @@ Codex tools for a Piper X arm and two Orbbec DaBai DC1 cameras connected to a
 Raspberry Pi 5. Codex runs on the Mac (or Pi); the controller runs on the Pi.
 The model runs in the cloud. No model API key is used by this project.
 
-**Current stage: software bring-up.** Mock operation, serial-selected RGB camera
-capture, and read-only arm telemetry are implemented. Physical motion, gripper
-control, calibration, depth processing, and collision-aware planning are not yet
-implemented. No configuration flag unlocks physical movement in this release.
+**Current stage: hardware bring-up.** Mock operation, serial-selected RGB camera
+capture, and read-only arm telemetry are implemented. Supervised single-joint,
+lateral and gripper smoke tests have now been run on the physical arm; see the
+[arm commissioning record](docs/pi-motion-check.md). Calibration, depth
+processing, and collision-aware planning are not implemented.
+
+Physical motion is reachable only from the CLI, only with `--confirm-motion-test`,
+and only in `hardware_readonly` mode. **No MCP tool moves the arm**, so the model
+cannot command motion in this release, and no configuration flag changes that.
 
 ```text
 Mac: Codex with Astra          OpenAI cloud: model inference
@@ -44,6 +49,9 @@ The [hardware notes](docs/hardware.md) record the camera identities found in the
 earlier `piper-x-arm` project. They must be confirmed against the physical rig.
 The [Pi camera commissioning record](docs/pi-camera-check.md) documents the
 verified installation, camera images and MCP checks, including one transient timeout.
+The [arm commissioning record](docs/pi-motion-check.md) documents the CAN bring-up,
+the three feedback defects found before any result was trusted, and the measured
+motion and gripper checks.
 
 ## Tools
 
@@ -56,6 +64,20 @@ verified installation, camera images and MCP checks, including one transient tim
 | `simulate_joint_move` | Bounded mock state update | Not exposed |
 | `simulate_gripper` | Mock aperture update | Not exposed |
 | `simulate_stop` | Latched mock stop | Not exposed; cannot stop a real arm |
+
+### Supervised motion tests (CLI only, not MCP tools)
+
+```bash
+.venv/bin/piper-agent motion-test  --config config/local.toml --joint 1 --delta 0.2 --confirm-motion-test
+.venv/bin/piper-agent lateral-test --config config/local.toml --delta 0.2 --confirm-motion-test
+.venv/bin/piper-agent gripper-test --config config/local.toml --confirm-motion-test
+```
+
+Each runs at 10% speed, offsets at most 0.2 rad, verifies measured displacement
+against advancing SDK feedback, and returns to the starting pose. They leave the
+arm enabled and holding, because disabling a raised arm lets it drop. Run them
+only with the workspace clear and an operator at the rig. There is no collision
+checking; `electronic_emergency_stop()` is not a hardware E-stop.
 
 Hardware SDKs are imported only when their tools are used. Startup never enables,
 homes, re-zeros, changes modes, clears faults, or modifies the gripper. Shutdown
