@@ -49,6 +49,9 @@ class MockCameras:
         return [Frame(role, serial, self.images[role], "image/png", time.monotonic(), time.time())
                 for role, serial in self.serials.items()]
 
+    def latest(self, role):
+        return self.capture()[0 if role == "scene" else 1]
+
     def close(self):
         pass
 
@@ -157,6 +160,13 @@ class OrbbecCameras:
                 if now >= deadline:
                     raise RuntimeError("Timed out waiting for fresh frames from BOTH cameras")
                 self.condition.wait(min(0.1, deadline - now))
+
+    def latest(self, role):
+        with self.condition:
+            frame = self.frames.get(role)
+        if frame is None or time.monotonic() - frame.received_monotonic > self.config.camera_max_age_s:
+            raise RuntimeError(f"No fresh {role} camera frame")
+        return frame
 
     def close(self):
         self.stop_event.set()

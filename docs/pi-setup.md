@@ -91,6 +91,17 @@ rules. Do not solve permissions by running the MCP server as root.
 .venv/bin/piper-agent snapshot-cameras --config config/local.toml
 ```
 
+For a temporary visual check from your Mac, run the camera-only viewer in an SSH
+terminal and open `http://<pi-hostname-or-ip>:8090/` in a browser:
+
+```bash
+bash scripts/pi-camera-web.sh
+```
+
+The viewer serves only the two RGB MJPEG streams and does not initialize the arm.
+Stop it with Ctrl-C. It is intended for a trusted home LAN; it has no login or
+TLS and should not be exposed through port forwarding.
+
 `probe-cameras` enumerates name, serial and firmware. `snapshot-cameras` captures
 the two configured cameras **without connecting to the arm**. Cover each lens in
 turn to verify the role labels. Review USB bandwidth, cable quality and power if

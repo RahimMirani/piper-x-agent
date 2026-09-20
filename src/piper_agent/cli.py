@@ -11,7 +11,9 @@ from .config import Config
 
 def main():
     parser = argparse.ArgumentParser(description="Piper X Codex tools; physical motion is unavailable in v0.1")
-    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve"])
+    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve", "camera-web"])
+    parser.add_argument("--bind", default="0.0.0.0", help="camera-web bind address")
+    parser.add_argument("--port", type=int, default=8090, help="camera-web TCP port")
     parser.add_argument("--config", type=Path, help="Explicit TOML configuration (required except doctor/probe-cameras)")
     args = parser.parse_args()
     try:
@@ -32,7 +34,11 @@ def main():
             parser.error("--config is required; hardware mode is never selected implicitly")
         config = Config.load(args.config)
         from .runtime import Runtime
-        if args.command == "serve":
+        if args.command == "camera-web":
+            from .web import serve_camera_web
+            with redirect_stdout(sys.stderr), Runtime(config) as runtime:
+                serve_camera_web(runtime, args.bind, args.port)
+        elif args.command == "serve":
             # Preserve fd 1 solely for MCP; vendor native/Python stdout goes to stderr.
             # Save a duplicate for the MCP transport before redirecting fd 1.
             import os
