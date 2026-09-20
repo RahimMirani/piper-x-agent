@@ -7,6 +7,20 @@ single-joint offset and return after an explicit CLI confirmation flag.
 import math
 import time
 
+_PIPER_X_LIMITS = ((-2.617994, 2.617994), (0.0, 3.141593),
+                   (-2.96706, 0.0), (-1.553344, 1.553344),
+                   (-1.553344, 1.553344), (-3.141593, 3.141593))
+
+
+def _validate_pose_for_sdk(joints):
+    for index, (value, (lower, upper)) in enumerate(zip(joints, _PIPER_X_LIMITS), 1):
+        if not lower <= value <= upper:
+            raise RuntimeError(
+                f"Refusing motion: joint {index} feedback {value:.6f} rad is "
+                f"outside PiPER-X SDK range [{lower:.6f}, {upper:.6f}]. "
+                "Verify the arm model/firmware zeroing before commanding motion."
+            )
+
 
 def _joint_feedback(robot, timeout):
     deadline = time.monotonic() + timeout
@@ -104,6 +118,7 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
         # return command does not ask for the pre-enable pose.
         time.sleep(0.5)
         start, start_stamp = _stable_joint_feedback(robot, 4.0)
+        _validate_pose_for_sdk(start)
         target = start.copy()
         target[joint - 1] += float(delta)
         if any(abs(value) > 3.1 for value in target):
@@ -155,6 +170,7 @@ def run_lateral_sweep(config, delta=0.02, timeout=8.0):
         robot.connect(); robot.reset(); time.sleep(1.0)
         robot.set_speed_percent(10); robot.enable(); time.sleep(0.5)
         base, _ = _stable_joint_feedback(robot, 4.0)
+        _validate_pose_for_sdk(base)
         left, right = base.copy(), base.copy()
         left[0] -= float(delta); right[0] += float(delta)
         robot.set_motion_mode("j")
