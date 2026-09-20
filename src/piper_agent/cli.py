@@ -11,9 +11,13 @@ from .config import Config
 
 def main():
     parser = argparse.ArgumentParser(description="Piper X Codex tools; physical motion is unavailable in v0.1")
-    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve", "camera-web"])
+    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve", "camera-web", "motion-test"])
     parser.add_argument("--bind", default="0.0.0.0", help="camera-web bind address")
     parser.add_argument("--port", type=int, default=8090, help="camera-web TCP port")
+    parser.add_argument("--joint", type=int, default=1, help="motion-test joint number (1-6)")
+    parser.add_argument("--delta", type=float, default=0.02, help="motion-test offset in radians (max 0.02)")
+    parser.add_argument("--timeout", type=float, default=8.0, help="motion-test convergence timeout")
+    parser.add_argument("--confirm-motion-test", action="store_true", help="required before any physical motion")
     parser.add_argument("--config", type=Path, help="Explicit TOML configuration (required except doctor/probe-cameras)")
     args = parser.parse_args()
     try:
@@ -34,7 +38,15 @@ def main():
             parser.error("--config is required; hardware mode is never selected implicitly")
         config = Config.load(args.config)
         from .runtime import Runtime
-        if args.command == "camera-web":
+        if args.command == "motion-test":
+            if not args.confirm_motion_test:
+                parser.error("motion-test requires --confirm-motion-test")
+            from .motion_test import run_single_joint_test
+            with redirect_stdout(sys.stderr), Runtime(config) as runtime:
+                result = run_single_joint_test(config, args.joint, args.delta, args.timeout)
+                runtime.log("motion_test", result)
+            print(json.dumps(result, indent=2, allow_nan=False))
+        elif args.command == "camera-web":
             from .web import serve_camera_web
             with redirect_stdout(sys.stderr), Runtime(config) as runtime:
                 serve_camera_web(runtime, args.bind, args.port)
