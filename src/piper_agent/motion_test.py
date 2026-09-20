@@ -25,8 +25,15 @@ def _joint_feedback(robot, timeout):
 def _wait_target(robot, target, timeout, tolerance=0.01):
     deadline = time.monotonic() + timeout
     last = None
+    previous = None
     while time.monotonic() < deadline:
         joints, stamp = _joint_feedback(robot, min(0.5, max(0.05, deadline - time.monotonic())))
+        # During an active trajectory this SDK can briefly publish a partially
+        # assembled frame with one or more joints at exactly zero. Reject
+        # implausible discontinuities instead of treating that frame as real.
+        if previous is not None and max(abs(a - b) for a, b in zip(joints, previous)) > 0.25:
+            continue
+        previous = joints
         last = {"joints_rad": joints, "timestamp": stamp,
                 "max_error_rad": max(abs(a - b) for a, b in zip(joints, target))}
         status = robot.get_arm_status()
