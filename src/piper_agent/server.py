@@ -27,6 +27,7 @@ def create_server(runtime):
         tool("robot_status", "Get mode and capabilities without connecting to hardware."),
         tool("read_arm_state", "Read six joint angles in radians; requires advancing hardware feedback."),
         tool("observe", "Get fresh scene and wrist RGB images plus arm state. Saves local run files. No motion."),
+        tool("observe_cameras", "Get both fresh RGB images without connecting to the arm. Use for camera setup."),
     ]
     if runtime.config.mode == "mock":
         catalog.extend([
@@ -46,8 +47,8 @@ def create_server(runtime):
             result = runtime.status()
         elif name == "read_arm_state":
             result = runtime.state()
-        elif name == "observe":
-            metadata, frames = runtime.observe()
+        elif name in {"observe", "observe_cameras"}:
+            metadata, frames = runtime.observe(include_arm=name == "observe")
             content = [TextContent(type="text", text=json.dumps(metadata))]
             for frame in frames:
                 content.append(TextContent(type="text", text=f"{frame.role} camera ({runtime.config.mode})"))

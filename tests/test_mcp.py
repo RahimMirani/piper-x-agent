@@ -33,13 +33,17 @@ class MCPTests(unittest.TestCase):
                         self.assertFalse(status.isError)
                         self.assertEqual(json.loads(status.content[0].text)["mode"], mode)
                         if mode == "hardware_readonly":
-                            self.assertEqual(names, {"robot_status", "read_arm_state", "observe"})
+                            self.assertEqual(names, {"robot_status", "read_arm_state", "observe", "observe_cameras"})
                             denied = await session.call_tool("simulate_joint_move", {"joints_rad": [0] * 6})
                             self.assertTrue(denied.isError)
                             continue
                         observation = await session.call_tool("observe", {})
                         self.assertFalse(observation.isError)
                         self.assertEqual(len([c for c in observation.content if c.type == "image"]), 2)
+                        cameras = await session.call_tool("observe_cameras", {})
+                        self.assertFalse(cameras.isError)
+                        self.assertIsNone(json.loads(cameras.content[0].text)["state"])
+                        self.assertEqual(len([c for c in cameras.content if c.type == "image"]), 2)
                         rejected = await session.call_tool("simulate_joint_move", {"joints_rad": [2] * 6})
                         self.assertTrue(rejected.isError)
                         malformed = await session.call_tool("simulate_joint_move", {"joints_rad": [0] * 5})

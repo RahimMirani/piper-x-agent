@@ -106,7 +106,7 @@ After independently checking both camera roles and arm feedback:
 ```
 
 Then switch the Codex SSH command to `config/local.toml` and restart its MCP
-connection. `robot_status` should show `hardware_readonly`; only three read tools
+connection. `robot_status` should show `hardware_readonly`; only read tools
 are exposed. A server instance holds the hardware process lock until it exits.
 Close that connection before launching another probe/snapshot process.
 

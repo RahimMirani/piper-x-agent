@@ -50,6 +50,7 @@ earlier `piper-x-arm` project. They must be confirmed against the physical rig.
 | `robot_status` | Mode and capabilities | Mode and capabilities; no connection needed |
 | `read_arm_state` | Mock joint angles | Fresh joint feedback in radians |
 | `observe` | Two diagnostic images + mock state | Two fresh RGB images + joint state |
+| `observe_cameras` | Two diagnostic images only | Both RGB feeds without connecting to the arm |
 | `simulate_joint_move` | Bounded mock state update | Not exposed |
 | `simulate_gripper` | Mock aperture update | Not exposed |
 | `simulate_stop` | Latched mock stop | Not exposed; cannot stop a real arm |

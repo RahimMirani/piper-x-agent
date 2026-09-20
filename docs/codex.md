@@ -65,7 +65,9 @@ connection only.
 
 Finish the Pi hardware checks, then replace `config/mock.toml` in the MCP command
 with `config/local.toml`. Restart the MCP connection and verify `robot_status`.
-Hardware mode exposes `robot_status`, `read_arm_state`, and `observe` only.
+Hardware mode exposes `robot_status`, `read_arm_state`, `observe`, and
+`observe_cameras`. Use `observe_cameras` during camera-only setup; it does not
+initialize the arm SDK or connect to CAN.
 
 Do not run another hardware server/probe while this connection holds its lock.
 The server does not auto-start at boot. Closing Codex/SSH ends the session; it
