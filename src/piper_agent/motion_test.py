@@ -56,12 +56,6 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
     start = None
     try:
         robot.connect()
-        start, start_stamp = _joint_feedback(robot, 3.0)
-        target = start.copy()
-        target[joint - 1] += float(delta)
-        if any(abs(value) > 3.1 for value in target):
-            raise ValueError("Refusing target too close to generic +/-3.1 rad safety envelope")
-
         # Explicitly request a low speed and joint-space mode. No gripper or
         # firmware/configuration operations are involved.
         robot.set_speed_percent(10)
@@ -80,6 +74,17 @@ def run_single_joint_test(config, joint=1, delta=0.02, timeout=8.0):
             time.sleep(0.1)
         if not enabled:
             raise RuntimeError(f"Arm did not report all joints enabled: {statuses!r}")
+
+        # Enabling can let the arm settle a few degrees as torque comes on.
+        # Establish the motion baseline only after that transient, so the
+        # return command does not ask for the pre-enable pose.
+        time.sleep(0.5)
+        start, start_stamp = _joint_feedback(robot, 3.0)
+        target = start.copy()
+        target[joint - 1] += float(delta)
+        if any(abs(value) > 3.1 for value in target):
+            raise ValueError("Refusing target too close to generic +/-3.1 rad safety envelope")
+
         robot.set_motion_mode("j")
 
         robot.move_j(target)
