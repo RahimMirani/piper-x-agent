@@ -24,9 +24,19 @@ speed_percent = 10
 max_joint_step_rad = 0.5
 # The most the flange may travel in one move_to_pose call.
 max_cartesian_step_m = 0.10
+# Physical commands allowed per episode before the model is told to stop and
+# report. Enforced on the Pi because neither agent CLI has a turn limit. A
+# first pilot ran to 64 actions without finishing.
+max_actions_per_episode = 100
+# Park pose every trial starts from. Measure it on your own rig: it is where
+# the arm rests safely, not a task-ready posture.
+# home_joints_rad = [0.0, 0.0, 0.0, 0.64, 0.0, 0.0]
 # Cartesian box in the ARM BASE frame, metres. move_to_pose is unavailable
 # until both are set. MEASURE THESE against your own table before enabling
 # Cartesian motion; the values below are a placeholder, not a verified
 # workspace, and a wrong box lets the arm drive into the table.
-# workspace_min_m = [0.05, -0.30, 0.02]
-# workspace_max_m = [0.55, 0.30, 0.45]
+# The z floor should be the height the arm physically cannot descend below
+# without its own base fouling, i.e. roughly the home pose's flange height.
+# Set it there and the box simply agrees with the joint limits.
+# workspace_min_m = [-0.10, -0.30, 0.14]
+# workspace_max_m = [ 0.45,  0.30, 0.40]
