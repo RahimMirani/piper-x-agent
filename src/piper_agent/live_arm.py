@@ -84,7 +84,14 @@ class LiveArm:
                 "gripper": gripper,
                 "gripper_aperture_m": gripper.get("measured_width_m"),
                 "gripper_homed": gripper.get("homed"),
+                "gripper_homed_note": ("Reports factory zeroing only. The gripper works normally "
+                                       "either way; it does not need homing before use."),
                 "motors_enabled": self.ready,
+                "motors_note": ("Motors enable AUTOMATICALLY on your first motion command. "
+                                "motors_enabled false simply means no motion has been commanded "
+                                "yet this session. You do not need to enable anything, and there "
+                                "is no tool to do so because none is needed."),
+                "ready_to_move": True,
                 "sdk_timestamp": stamp,
                 "sampled_at_unix_s": time.time(),
                 "physical_motion_supported": True}

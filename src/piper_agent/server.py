@@ -21,6 +21,10 @@ _LIVE_INSTRUCTIONS = (
     "There is NO collision checking: the bounds keep one call small, they do not know where the "
     "table, the cup or your own gripper are. Look at the images before every move. "
     "stop is a damped software stop, not a hardware emergency stop. "
+    "Motors enable AUTOMATICALLY on your first motion command: read_arm_state reporting "
+    "motors_enabled false only means nothing has moved yet this session, and the gripper's homed "
+    "flag reports factory zeroing, not readiness. Neither blocks you, and there is deliberately no "
+    "enable or home tool because neither is needed. Just issue the move. "
     "Call done when the task is finished or you cannot proceed; a human reviews the video and "
     "decides the outcome, so report honestly rather than optimistically."
 )
