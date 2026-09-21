@@ -68,6 +68,61 @@ After the session: `arm_status NORMAL`, `err_code 0`, no error bits, all six
 joints enabled and holding, gripper at 0.0201 m. The tests deliberately leave the
 arm enabled, because disabling a raised arm lets it drop.
 
+## Second session — all six joints and first Cartesian motion (2026-09-21)
+
+Joints 2 to 6 had never been commanded. Each was moved individually and returned,
+at 10% speed. Joint 2 and joint 3 were tried small first because they carry the
+arm's weight. Joint 3's range is `[-2.967, 0]`, so its delta must be negative.
+
+| Joint | Commanded | Measured | Return error |
+| --- | --- | --- | --- |
+| J2 | 0.05 rad | 0.049829 | 0.0016 |
+| J2 | 0.2 rad | 0.198269 | 0.0007 |
+| J3 | -0.05 rad | 0.049829 | 0.0000 |
+| J3 | -0.2 rad | 0.199055 | 0.0014 |
+| J4 | 0.2 rad | 0.198426 | 0.0017 |
+| J5 | 0.2 rad | 0.200643 | 0.0016 |
+| J6 | 0.2 rad | 0.199858 | 0.0006 |
+
+The gripper cycle passed again through the rewritten path, measuring 19.7 mm of
+travel, with the driver reporting enabled once the arm had been enabled.
+
+### move_l, and the bug it exposed
+
+The first Cartesian move succeeded. The second batch then under-travelled, the
+controller latched `REACH_TARGET_POS_FAILED`, a move that had physically arrived
+within 1.1 mm was failed by its own convergence check, and the resulting damped
+stop left the arm in `EMERGENCY_STOP`. `robot.reset()` cleared it, re-enabling
+worked, and joint control was immediately verified again.
+
+One defect caused all of it. `wait_pose_target` decided the flange had settled
+by comparing **consecutive** feedback frames. At 10% speed with roughly 100 Hz
+feedback the flange advances well under a millimetre per frame, so a move in
+progress always looked stationary; the wait returned early, and the next command
+interrupted a trajectory still in flight, which the controller correctly reported
+as a failed reach. Settling is now judged against a frame at least 0.25 s old.
+
+With that fixed, every leg reports `REACH_TARGET_POS_SUCCESSFULLY`:
+
+| Axis | Commanded | Measured | Position error | Joint swing |
+| --- | --- | --- | --- | --- |
+| +z | 0.010 m | 0.00952 m | 0.48 mm | 0.035 rad |
+| +y | 0.015 m | 0.01453 m | 0.46 mm | 0.270 rad |
+
+Two further fixes came out of the same session. Cartesian convergence no longer
+gates on `motion_status`, which `move_l` latches and does not clear on arrival,
+and the position tolerance now scales to the commanded step, because a flat 5 mm
+band let a 10 mm command that travelled half way report success.
+
+### A Cartesian step is not a joint bound
+
+The +y row above is the important one. Fifteen millimetres sideways cost 0.27 rad
+of joint swing, eighteen times the joint cost of the same distance in z, because
+the flange sits close to the base axis where a small lateral move demands a large
+base rotation. `max_cartesian_step_m` alone gives a false sense of boundedness,
+so `move_to_pose` now also aborts if any joint swings past `max_joint_step_rad`
+during the move.
+
 ## Saved evidence on the Pi
 
 - `runs/20260920T070627Z-670e2541/` — J1 at 0.02 rad.
@@ -84,8 +139,12 @@ Run names use UTC.
   zero reference. Measured width tracked commands to under 1 mm here, which shows
   the scale is right, but absolute aperture is not calibrated and no grasp force
   has been characterised. Nothing was gripped.
-- Joint signs and zeros are not established; only joint 1 was moved under command.
-  Joints 2–6 have never been commanded away from their current pose.
+- Joint signs and zeros are not established. Every joint has now been moved
+  individually and returned, but only one at a time and only about its resting
+  pose; no multi-joint or large-amplitude motion has been characterised.
+- The Cartesian workspace box in `config/live.toml` is still unset, so
+  `move_to_pose` is unavailable until someone measures the real table bounds.
+  The checks above used a temporary 12 cm box around the resting pose.
 - No collision checking exists. These are bounded single-joint steps in clear
   space, not planned trajectories. A joint step limit is not collision avoidance
   and `electronic_emergency_stop()` is not a hardware E-stop.
