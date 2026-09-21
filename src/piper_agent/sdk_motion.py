@@ -29,6 +29,12 @@ _POSE_ANGLE_LIMITS = ((-math.pi, math.pi), (-math.pi / 2, math.pi / 2), (-math.p
 # anything about whether the flange has stopped.
 _SETTLE_INTERVAL_S = 0.25
 
+# How long to allow before deciding the controller simply refused a Cartesian
+# target. move_l reports nothing when there is no IK solution: it neither moves
+# nor errors, so without this the caller waits out the whole timeout and then
+# fires a damped stop over a command the arm never accepted.
+_NO_MOTION_GRACE_S = 2.5
+
 _GRIPPER_FAULT_FLAGS = ("voltage_too_low", "motor_overheating", "driver_overcurrent",
                         "driver_overheating", "sensor_status", "driver_error_status")
 
@@ -85,12 +91,35 @@ def require_valid_pose_angles(pose):
             )
 
 
+# arm_status values that mean the controller will not act on commands, or has
+# hit something. Checking only the err_status bits missed all of these — a
+# collision included. 0x00 is NORMAL and 0x08 is a teaching-drag overspeed that
+# cannot arise here.
+_BLOCKING_ARM_STATUS = {
+    0x01: "EMERGENCY_STOP",
+    0x02: "NO_SOLUTION",
+    0x03: "SINGULARITY_POINT",
+    0x04: "TARGET_POS_EXCEEDS_LIMIT",
+    0x05: "JOINT_COMMUNICATION_ERR",
+    0x06: "JOINT_BRAKE_NOT_RELEASED",
+    0x07: "COLLISION_OCCURRED",
+}
+
+
 def arm_faults(robot):
     """Return the arm's active fault names, or an empty list."""
     status = robot.get_arm_status()
     if status is None:
         return []
     faults = [name for name, value in vars(status.msg.err_status).items() if value is True]
+    state = getattr(status.msg, "arm_status", None)
+    if state is not None:
+        try:
+            name = _BLOCKING_ARM_STATUS.get(int(state))
+        except (TypeError, ValueError):
+            name = None
+        if name:
+            faults.append(f"arm_status={name}")
     if int(getattr(status.msg, "err_code", 0) or 0):
         faults.append(f"err_code={int(status.msg.err_code)}")
     return faults
@@ -186,7 +215,7 @@ def wait_target(robot, target, timeout, tolerance=0.01):
 
 
 def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tolerance=0.05,
-                     start_joints=None, max_joint_excursion_rad=None):
+                     start_joints=None, max_joint_excursion_rad=None, start_pose=None):
     """Wait for the flange pose to settle at target.
 
     motion_status is not usable as a gate here, unlike the joint path. move_l
@@ -201,6 +230,7 @@ def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tol
     caller supplies a joint budget, abort the move the moment it is exceeded.
     """
     deadline = time.monotonic() + timeout
+    started = time.monotonic()
     last = None
     previous = None
     previous_time = 0.0
@@ -220,6 +250,18 @@ def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tol
                 )
         position_error = max(abs(a - b) for a, b in zip(pose[:3], target[:3]))
         angle_error = max(abs(a - b) for a, b in zip(pose[3:], target[3:]))
+        # A target with no IK solution from the current configuration is simply
+        # ignored: the flange does not move and nothing is reported. Say so
+        # promptly and actionably instead of waiting out the timeout.
+        if start_pose is not None and time.monotonic() - started > _NO_MOTION_GRACE_S:
+            moved = max(abs(a - b) for a, b in zip(pose[:3], start_pose[:3]))
+            if moved < 0.001 and position_error > position_tolerance:
+                raise RuntimeError(
+                    "The controller did not accept this Cartesian pose: the flange has not moved "
+                    f"after {_NO_MOTION_GRACE_S:.1f}s and is still {position_error:.4f} m away. "
+                    "It is most likely unreachable from the current arm configuration. Move in "
+                    "joint space to open the arm out first, then try Cartesian again."
+                )
         status = robot.get_arm_status()
         last = {"flange_pose": pose, "timestamp": stamp,
                 "max_position_error_m": position_error, "max_angle_error_rad": angle_error,

@@ -157,7 +157,8 @@ class LiveArm:
                                        position_tolerance=tolerance,
                                        angle_tolerance=_ANGLE_TOLERANCE_RAD,
                                        start_joints=start_joints,
-                                       max_joint_excursion_rad=self.limits.max_joint_step_rad)
+                                       max_joint_excursion_rad=self.limits.max_joint_step_rad,
+                                       start_pose=start)
         except BaseException:
             self._damped_stop()
             raise
@@ -216,6 +217,11 @@ class LiveArm:
             )
         target = list(target)
         require_in_joint_limits(target)
+        # Clear a latched stop or a rejected-target state first. Homing is the
+        # operator's recovery path, so it must work from a faulted arm rather
+        # than refusing on the fault it is there to clear.
+        self.robot.reset()
+        time.sleep(1.0)
         self._ensure_ready()
         self.robot.set_motion_mode("j")
         legs = []

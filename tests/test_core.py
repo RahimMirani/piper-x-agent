@@ -290,7 +290,8 @@ class LiveArmBoundsTests(unittest.TestCase):
         arm.robot = types.SimpleNamespace(
             move_j=lambda t: arm.sent.append(("move_j", t)),
             move_l=lambda t: arm.sent.append(("move_l", t)),
-            set_motion_mode=lambda m: None)
+            set_motion_mode=lambda m: None,
+            reset=lambda: arm.sent.append(("reset", [])))
         return arm
 
     def test_out_of_range_joint_target_is_refused_not_clamped(self):
@@ -370,12 +371,43 @@ class LiveArmBoundsTests(unittest.TestCase):
         poses = [[0.0] * 6, [0.2, 0, 0, 0, 0, 0], [0.4, 0, 0, 0, 0, 0], [0.5, 0, 0, 0, 0, 0]]
         with patch("piper_agent.live_arm.joint_feedback", side_effect=[(p, 1) for p in poses]), \
                 patch("piper_agent.live_arm.assert_no_faults"), \
-                patch("piper_agent.live_arm.wait_target", return_value={"max_error_rad": 0.0}):
+                patch("piper_agent.live_arm.wait_target", return_value={"max_error_rad": 0.0}), \
+                patch("piper_agent.live_arm.time.sleep"):
             result = arm.home()
         self.assertTrue(result["reached"])
         self.assertEqual(len(result["legs"]), 3)
-        for _, waypoint in arm.sent:
+        self.assertEqual(arm.sent[0][0], "reset")
+        for kind, waypoint in arm.sent[1:]:
+            self.assertEqual(kind, "move_j")
             self.assertLessEqual(max(abs(v) for v in waypoint), 0.5)
+
+    def test_arm_status_faults_are_detected(self):
+        # Only err_status bits were checked before, so a collision or a rejected
+        # target read as healthy.
+        from piper_agent.sdk_motion import arm_faults
+        clean = types.SimpleNamespace()
+        for name in ("joint_1_angle_limit", "communication_status_joint_1"):
+            setattr(clean, name, False)
+        for code, expected in ((0x00, []), (0x07, ["arm_status=COLLISION_OCCURRED"]),
+                               (0x04, ["arm_status=TARGET_POS_EXCEEDS_LIMIT"])):
+            robot = types.SimpleNamespace(get_arm_status=lambda code=code: types.SimpleNamespace(
+                msg=types.SimpleNamespace(err_status=clean, arm_status=code, err_code=0)))
+            with self.subTest(code=code):
+                self.assertEqual(arm_faults(robot), expected)
+
+    def test_unreachable_cartesian_pose_is_reported_not_waited_out(self):
+        # From the home corner move_l has no IK solution and simply ignores the
+        # command: no motion, no error. Without this the caller burns the whole
+        # timeout and then fires a damped stop over a command never accepted.
+        from piper_agent.sdk_motion import wait_pose_target
+        robot = types.SimpleNamespace(
+            get_arm_status=lambda: None,
+            get_flange_pose=lambda: types.SimpleNamespace(msg=[0.0] * 6, timestamp=time.time()))
+        with patch("piper_agent.sdk_motion.assert_no_faults"), \
+                patch("piper_agent.sdk_motion._NO_MOTION_GRACE_S", 0.0):
+            with self.assertRaisesRegex(RuntimeError, "did not accept this Cartesian pose"):
+                wait_pose_target(robot, [0.0, 0.0, 0.2, 0.0, 0.0, 0.0], 5.0,
+                                 start_pose=[0.0] * 6)
 
     def test_in_range_target_reaches_the_sdk_unchanged(self):
         arm = self._arm()
