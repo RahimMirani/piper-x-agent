@@ -93,11 +93,24 @@ for i in $(seq 1 "$TRIALS"); do
   echo " Trial $i of $TRIALS  ($TASK / $AGENT)"
   echo "=============================================================="
   echo " Reset the scene: cube on its mark, cup on its mark, arm clear."
+  echo " (the arm is homed automatically after you confirm)"
   echo " Start the external video recording."
   read -r -p " Press ENTER when the scene is reset, or type 's' to skip: " REPLY
   if [[ "$REPLY" == "s" ]]; then
     echo '{"outcome": "skipped_by_operator"}' > "$TRIAL_DIR/result.json"
     continue
+  fi
+
+  # Return the arm to the configured home pose so every trial starts from the
+  # same configuration. Without this, trial N starts wherever trial N-1 stopped
+  # and the difference between two models is buried under that drift.
+  echo " Homing the arm ..."
+  if ! ssh -T -o BatchMode=yes "$PI_HOST" \
+      "cd $PI_CHECKOUT && .venv/bin/piper-agent home --config $PI_CONFIG --confirm-motion-test" \
+      > "$TRIAL_DIR/home.json" 2> "$TRIAL_DIR/home.log"; then
+    echo " HOMING FAILED - see $TRIAL_DIR/home.log; marking trial invalid and stopping." >&2
+    echo '{"outcome": "invalid", "reason": "homing failed"}' > "$TRIAL_DIR/result.json"
+    exit 1
   fi
 
   # A fresh empty directory per trial: no repo, no agent instruction files.

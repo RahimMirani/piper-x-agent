@@ -11,7 +11,7 @@ from .config import Config
 
 def main():
     parser = argparse.ArgumentParser(description="Piper X Codex tools; physical motion is unavailable in v0.1")
-    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve", "camera-web", "motion-test", "lateral-test", "gripper-test", "arm", "disarm", "arm-status"])
+    parser.add_argument("command", choices=["doctor", "probe-cameras", "probe-arm", "snapshot", "snapshot-cameras", "serve", "camera-web", "motion-test", "lateral-test", "gripper-test", "home", "arm", "disarm", "arm-status"])
     parser.add_argument("--bind", default="0.0.0.0", help="camera-web bind address")
     parser.add_argument("--port", type=int, default=8090, help="camera-web TCP port")
     parser.add_argument("--joint", type=int, default=1, help="motion-test joint number (1-6)")
@@ -56,7 +56,13 @@ def main():
             parser.error("--config is required; hardware mode is never selected implicitly")
         config = Config.load(args.config)
         from .runtime import Runtime
-        if args.command in {"motion-test", "lateral-test", "gripper-test"}:
+        if args.command == "home":
+            if not args.confirm_motion_test:
+                parser.error("home moves the arm; pass --confirm-motion-test")
+            with redirect_stdout(sys.stderr), Runtime(config) as runtime:
+                result = runtime.go_home()
+            print(json.dumps(result, indent=2, allow_nan=False))
+        elif args.command in {"motion-test", "lateral-test", "gripper-test"}:
             if not args.confirm_motion_test:
                 parser.error("physical tests require --confirm-motion-test")
             with redirect_stdout(sys.stderr), Runtime(config) as runtime:

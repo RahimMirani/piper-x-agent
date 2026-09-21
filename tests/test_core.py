@@ -359,6 +359,24 @@ class LiveArmBoundsTests(unittest.TestCase):
         # Converged anyway, and reported the controller's disagreement.
         self.assertEqual(reached["controller_motion_status"], "1")
 
+    def test_home_requires_configuration_and_walks_in_bounded_steps(self):
+        arm = self._arm(max_joint_step_rad=0.2)
+        with self.assertRaisesRegex(RuntimeError, "No home pose configured"):
+            arm.home()
+
+        # Home can be far from wherever the last episode stopped, so it is
+        # approached in steps no larger than the per-call budget.
+        arm = self._arm(max_joint_step_rad=0.2, home_joints_rad=(0.5, 0.0, 0.0, 0.0, 0.0, 0.0))
+        poses = [[0.0] * 6, [0.2, 0, 0, 0, 0, 0], [0.4, 0, 0, 0, 0, 0], [0.5, 0, 0, 0, 0, 0]]
+        with patch("piper_agent.live_arm.joint_feedback", side_effect=[(p, 1) for p in poses]), \
+                patch("piper_agent.live_arm.assert_no_faults"), \
+                patch("piper_agent.live_arm.wait_target", return_value={"max_error_rad": 0.0}):
+            result = arm.home()
+        self.assertTrue(result["reached"])
+        self.assertEqual(len(result["legs"]), 3)
+        for _, waypoint in arm.sent:
+            self.assertLessEqual(max(abs(v) for v in waypoint), 0.5)
+
     def test_in_range_target_reaches_the_sdk_unchanged(self):
         arm = self._arm()
         target = [0.1, 0.2, -0.3, 0.4, 0.4, 0.4]  # every joint within the default 0.5 rad step

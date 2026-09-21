@@ -8,10 +8,11 @@ call small, they do not know where the table is.
 
 import time
 
-from .sdk_motion import (assert_no_faults, connect_arm, enable_and_baseline,
-                         flange_pose_feedback, gripper_observation, gripper_sample,
-                         joint_feedback, require_in_joint_limits, require_valid_pose_angles,
-                         validate_six, wait_pose_target, wait_target)
+from .sdk_motion import (assert_no_faults, commandable_pose, connect_arm,
+                         enable_and_baseline, flange_pose_feedback, gripper_observation,
+                         gripper_sample, joint_feedback, require_in_joint_limits,
+                         require_valid_pose_angles, validate_six, wait_pose_target,
+                         wait_target)
 
 _MOVE_TIMEOUT_S = 15.0
 _JOINT_TOLERANCE_RAD = 0.01
@@ -20,6 +21,7 @@ _ANGLE_TOLERANCE_RAD = 0.05
 _GRIPPER_SETTLE_S = 1.2
 _GRIPPER_MAX_WIDTH_M = 0.07
 _GRIPPER_MAX_FORCE_N = 2.0
+_HOME_TOLERANCE_RAD = 0.02
 
 
 class LiveArm:
@@ -196,6 +198,52 @@ class LiveArm:
                 "measured_force_n": after["measured_force_n"],
                 "homed": after["homed"],
                 "absolute_width_verified": after["homed"]}
+
+    # -- homing ----------------------------------------------------------
+
+    def home(self, timeout_s=60.0):
+        """Walk to the configured home pose in bounded steps.
+
+        Trials have to start from the same configuration or the difference
+        between two models is buried under where the previous episode happened
+        to stop. Home can be far away, so approach it in steps no larger than
+        the per-call budget rather than commanding one long move.
+        """
+        target = self.limits.home_joints_rad
+        if target is None:
+            raise RuntimeError(
+                "No home pose configured: set home_joints_rad in the [live] section."
+            )
+        target = list(target)
+        require_in_joint_limits(target)
+        self._ensure_ready()
+        self.robot.set_motion_mode("j")
+        legs = []
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            current, _ = joint_feedback(self.robot, 2.0)
+            remaining = max(abs(a - b) for a, b in zip(target, current))
+            if remaining <= _HOME_TOLERANCE_RAD:
+                return {"home_joints_rad": target, "measured_joints_rad": current,
+                        "legs": legs, "reached": True,
+                        "final_error_rad": remaining}
+            scale = min(1.0, self.limits.max_joint_step_rad / remaining)
+            waypoint = [c + (t - c) * scale for c, t in zip(current, target)]
+            # The interpolated point can sit a hair outside a boundary when the
+            # arm is resting just past one; clamp it the same way a baseline is.
+            waypoint, _ = commandable_pose(waypoint)
+            assert_no_faults(self.robot, "while homing")
+            self.robot.move_j(waypoint)
+            try:
+                reached = wait_target(self.robot, waypoint, _MOVE_TIMEOUT_S,
+                                      tolerance=_JOINT_TOLERANCE_RAD)
+            except BaseException:
+                self._damped_stop()
+                raise
+            legs.append({"waypoint_rad": waypoint,
+                         "max_error_rad": reached["max_error_rad"],
+                         "remaining_rad": remaining})
+        raise TimeoutError(f"Did not reach the home pose within {timeout_s:.0f}s; legs={len(legs)}")
 
     # -- stopping --------------------------------------------------------
 

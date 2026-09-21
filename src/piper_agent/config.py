@@ -33,6 +33,7 @@ class LiveLimits:
     max_cartesian_step_m: float = 0.10
     workspace_min_m: tuple | None = None
     workspace_max_m: tuple | None = None
+    home_joints_rad: tuple | None = None
 
     def workspace_bounds(self):
         if self.workspace_min_m is None or self.workspace_max_m is None:
@@ -42,7 +43,7 @@ class LiveLimits:
     @classmethod
     def load(cls, data):
         allowed = {"speed_percent", "max_joint_step_rad", "max_cartesian_step_m",
-                   "workspace_min_m", "workspace_max_m"}
+                   "workspace_min_m", "workspace_max_m", "home_joints_rad"}
         if data.keys() - allowed:
             raise ValueError(f"Unknown live configuration key: {data.keys() - allowed}")
         speed = data.get("speed_percent", 10)
@@ -60,7 +61,15 @@ class LiveLimits:
             raise ValueError("Set both workspace_min_m and workspace_max_m, or neither")
         if low is not None and any(a >= b for a, b in zip(low, high)):
             raise ValueError("Each workspace_min_m axis must be below workspace_max_m")
-        return cls(speed, float(joint_step), float(cartesian_step), low, high)
+        home = data.get("home_joints_rad")
+        if home is not None:
+            if not isinstance(home, list) or len(home) != 6 or not all(_finite(v) for v in home):
+                raise ValueError("home_joints_rad must be six finite joint angles in radians")
+            # Refuse a home the arm could never be commanded to reach.
+            from .sdk_motion import require_in_joint_limits
+            require_in_joint_limits([float(v) for v in home])
+            home = tuple(float(v) for v in home)
+        return cls(speed, float(joint_step), float(cartesian_step), low, high, home)
 
 
 @dataclass(frozen=True)

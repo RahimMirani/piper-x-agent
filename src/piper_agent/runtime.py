@@ -174,6 +174,24 @@ class Runtime:
             self.log("action", {"action": action, "value": value, "result": result})
             return result
 
+    def go_home(self):
+        """Operator-driven return to the configured home pose.
+
+        Deliberately not an MCP tool and deliberately not gated on the arming
+        window: this is the harness resetting the rig between trials, not a
+        model deciding to move.
+        """
+        with self.mutex:
+            if not self.live:
+                raise RuntimeError("Homing requires mode = \"hardware_live\"")
+            try:
+                result = self._arm().home()
+            except Exception as exc:
+                self.log("home_failed", {"error": f"{type(exc).__name__}: {exc}"})
+                raise
+            self.log("home", result)
+            return result
+
     def declare_done(self, success, note=""):
         """Record the model's own end-of-episode claim. Grading never trusts it."""
         record = {"claimed_success": bool(success), "note": str(note)[:2000]}
