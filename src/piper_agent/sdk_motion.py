@@ -25,6 +25,10 @@ CLAMP_TOLERANCE_RAD = 0.05
 # explains itself instead of surfacing as an opaque SDK ValueError.
 _POSE_ANGLE_LIMITS = ((-math.pi, math.pi), (-math.pi / 2, math.pi / 2), (-math.pi, math.pi))
 
+# How far apart two frames must be in time before their difference says
+# anything about whether the flange has stopped.
+_SETTLE_INTERVAL_S = 0.25
+
 _GRIPPER_FAULT_FLAGS = ("voltage_too_low", "motor_overheating", "driver_overcurrent",
                         "driver_overheating", "sensor_status", "driver_error_status")
 
@@ -181,22 +185,64 @@ def wait_target(robot, target, timeout, tolerance=0.01):
     raise TimeoutError(f"Target did not converge within {timeout:.1f}s; last={last}")
 
 
-def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tolerance=0.05):
-    """Wait for the flange pose to reach target within separate position/angle bands."""
+def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tolerance=0.05,
+                     start_joints=None, max_joint_excursion_rad=None):
+    """Wait for the flange pose to settle at target.
+
+    motion_status is not usable as a gate here, unlike the joint path. move_l
+    latches REACH_TARGET_POS_FAILED when the controller cannot follow the
+    straight-line path exactly, and the flag stays set after the flange has in
+    fact arrived, so gating on it fails a move that physically succeeded and then
+    fires a damped stop. Converge on a measured error that has stopped changing,
+    and report what the controller believed rather than obeying it.
+
+    A Cartesian step does not bound joint motion: near the base axis a two
+    centimetre lateral move can demand twenty degrees of base rotation. When the
+    caller supplies a joint budget, abort the move the moment it is exceeded.
+    """
     deadline = time.monotonic() + timeout
     last = None
+    previous = None
+    previous_time = 0.0
+    settled = 0
     while time.monotonic() < deadline:
         pose, stamp = flange_pose_feedback(robot, min(0.5, max(0.05, deadline - time.monotonic())))
+        assert_no_faults(robot, "while converging on a commanded Cartesian pose")
+        excursion = None
+        if start_joints is not None and max_joint_excursion_rad is not None:
+            joints, _ = joint_feedback(robot, 0.5)
+            excursion = max(abs(a - b) for a, b in zip(joints, start_joints))
+            if excursion > max_joint_excursion_rad:
+                raise RuntimeError(
+                    f"Aborting Cartesian move: a joint has swung {excursion:.4f} rad, past the "
+                    f"{max_joint_excursion_rad:.4f} rad budget for one call. A small Cartesian "
+                    "step near the base axis can demand a large joint motion."
+                )
         position_error = max(abs(a - b) for a, b in zip(pose[:3], target[:3]))
         angle_error = max(abs(a - b) for a, b in zip(pose[3:], target[3:]))
-        last = {"flange_pose": pose, "timestamp": stamp,
-                "max_position_error_m": position_error, "max_angle_error_rad": angle_error}
-        assert_no_faults(robot, "while converging on a commanded Cartesian pose")
         status = robot.get_arm_status()
-        motion_done = status is not None and getattr(status.msg, "motion_status", None) == 0
-        if motion_done and position_error <= position_tolerance and angle_error <= angle_tolerance:
+        last = {"flange_pose": pose, "timestamp": stamp,
+                "max_position_error_m": position_error, "max_angle_error_rad": angle_error,
+                "max_joint_excursion_rad": excursion,
+                "controller_motion_status": str(getattr(status.msg, "motion_status", None))
+                                            if status is not None else None}
+        # Compare against a frame from a fixed interval ago, never the frame
+        # immediately before. At 10% speed with ~100 Hz feedback a moving flange
+        # advances well under a millimetre per frame, so consecutive frames make
+        # a move in progress look stationary and the wait returns early.
+        now = time.monotonic()
+        if previous is None or now - previous_time >= _SETTLE_INTERVAL_S:
+            if previous is not None and \
+                    max(abs(a - b) for a, b in zip(pose[:3], previous[:3])) <= 0.0005 and \
+                    max(abs(a - b) for a, b in zip(pose[3:], previous[3:])) <= 0.005:
+                settled += 1
+            else:
+                settled = 0
+            previous = pose
+            previous_time = now
+        if settled >= 2 and position_error <= position_tolerance and angle_error <= angle_tolerance:
             return last
-    raise TimeoutError(f"Cartesian target did not converge within {timeout:.1f}s; last={last}")
+    raise TimeoutError(f"Cartesian target did not settle within {timeout:.1f}s; last={last}")
 
 
 def connect_arm(config):

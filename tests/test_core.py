@@ -330,6 +330,35 @@ class LiveArmBoundsTests(unittest.TestCase):
                 arm.set_gripper(width)
         self.assertEqual(arm.sent, [])
 
+    def test_cartesian_move_aborts_on_an_oversized_joint_swing(self):
+        # A 2 cm lateral step near the base axis measured a 0.36 rad base
+        # rotation on hardware, so the Cartesian bound alone is not a joint bound.
+        from piper_agent.sdk_motion import wait_pose_target
+        robot = types.SimpleNamespace(
+            get_arm_status=lambda: None,
+            get_joint_angles=lambda: types.SimpleNamespace(msg=[0.9] + [0.0] * 5,
+                                                           timestamp=time.time()),
+            get_flange_pose=lambda: types.SimpleNamespace(msg=[0.0] * 6, timestamp=time.time()))
+        with patch("piper_agent.sdk_motion.assert_no_faults"):
+            with self.assertRaisesRegex(RuntimeError, "joint has swung"):
+                wait_pose_target(robot, [0.0] * 6, 5.0,
+                                 start_joints=[0.0] * 6, max_joint_excursion_rad=0.5)
+
+    def test_cartesian_convergence_ignores_the_latched_failure_flag(self):
+        # move_l latches REACH_TARGET_POS_FAILED when it cannot follow the
+        # straight line exactly, and the flag survives arrival. Gating on it
+        # failed a move that had physically succeeded to within 1.1 mm.
+        from piper_agent.sdk_motion import wait_pose_target
+        status = types.SimpleNamespace(msg=types.SimpleNamespace(motion_status=1))
+        robot = types.SimpleNamespace(
+            get_arm_status=lambda: status,
+            get_flange_pose=lambda: types.SimpleNamespace(msg=[0.0] * 6, timestamp=time.time()))
+        with patch("piper_agent.sdk_motion.assert_no_faults"):
+            reached = wait_pose_target(robot, [0.0] * 6, 5.0)
+        self.assertEqual(reached["max_position_error_m"], 0.0)
+        # Converged anyway, and reported the controller's disagreement.
+        self.assertEqual(reached["controller_motion_status"], "1")
+
     def test_in_range_target_reaches_the_sdk_unchanged(self):
         arm = self._arm()
         target = [0.1, 0.2, -0.3, 0.4, 0.4, 0.4]  # every joint within the default 0.5 rad step

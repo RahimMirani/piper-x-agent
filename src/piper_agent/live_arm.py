@@ -135,18 +135,27 @@ class LiveArm:
         self._ensure_ready()
         start, _ = flange_pose_feedback(self.robot, 2.0)
         step = max(abs(a - b) for a, b in zip(target[:3], start[:3]))
-        if step > self.limits.max_cartesian_step_m:
+        # Compare with a micrometre of slack: a step written as exactly the
+        # limit lands a few float ULPs above it and would be refused.
+        if step > self.limits.max_cartesian_step_m + 1e-9:
             raise ValueError(
                 f"Refusing a {step:.4f} m step; this call may move the flange at most "
                 f"{self.limits.max_cartesian_step_m:.4f} m. Command a closer pose and repeat."
             )
         assert_no_faults(self.robot, "before a commanded Cartesian move")
+        start_joints, _ = joint_feedback(self.robot, 2.0)
         self.robot.set_motion_mode("l")
         self.robot.move_l(target)
+        # Scale the band to the step. A flat 5 mm tolerance lets a 10 mm command
+        # that travelled half way report success, which is the same false pass
+        # that the joint path already guards against.
+        tolerance = min(_POSITION_TOLERANCE_M, max(0.0005, step * 0.25))
         try:
             reached = wait_pose_target(self.robot, target, _MOVE_TIMEOUT_S,
-                                       position_tolerance=_POSITION_TOLERANCE_M,
-                                       angle_tolerance=_ANGLE_TOLERANCE_RAD)
+                                       position_tolerance=tolerance,
+                                       angle_tolerance=_ANGLE_TOLERANCE_RAD,
+                                       start_joints=start_joints,
+                                       max_joint_excursion_rad=self.limits.max_joint_step_rad)
         except BaseException:
             self._damped_stop()
             raise
@@ -154,10 +163,16 @@ class LiveArm:
         return {"commanded_pose": target,
                 "start_pose": start,
                 "measured_pose": reached["flange_pose"],
+                "start_joints_rad": start_joints,
                 "measured_joints_rad": joints,
+                "joint_excursion_rad": max(abs(a - b) for a, b in zip(joints, start_joints)),
                 "max_position_error_m": reached["max_position_error_m"],
                 "max_angle_error_rad": reached["max_angle_error_rad"],
+                "controller_motion_status": reached["controller_motion_status"],
                 "requested_step_m": step,
+                "measured_step_m": max(abs(a - b) for a, b in
+                                       zip(reached["flange_pose"][:3], start[:3])),
+                "position_tolerance_m": tolerance,
                 "speed_percent": self.limits.speed_percent}
 
     def set_gripper(self, width_m, force_n=1.0):
