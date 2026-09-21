@@ -12,7 +12,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from piper_agent.arm import MockArm, ReadOnlyArm
 from piper_agent.cameras import Frame
-from piper_agent import arming
 from piper_agent.config import Config, LiveLimits
 from piper_agent.live_arm import LiveArm
 from piper_agent.runtime import ProcessLock, Runtime
@@ -216,43 +215,6 @@ class MotionGuardTests(unittest.TestCase):
         self.assertIn("no frames", unavailable["reason"])
 
 
-class ArmingTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        path = Path(self.temp.name) / "arm.json"
-        patcher = patch("piper_agent.arming.arm_path", return_value=path)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.path = path
-
-    def test_unarmed_by_default_and_motion_is_refused(self):
-        self.assertEqual(arming.status()[0], False)
-        with self.assertRaisesRegex(RuntimeError, "not armed"):
-            arming.require_armed()
-
-    def test_arming_expires_on_its_own(self):
-        arming.arm(1)
-        self.assertTrue(arming.status()[0])
-        self.assertGreater(arming.require_armed(), 0)
-        with patch("piper_agent.arming.time.time", return_value=time.time() + 3600):
-            self.assertFalse(arming.status()[0])
-            with self.assertRaises(RuntimeError):
-                arming.require_armed()
-
-    def test_disarm_and_window_bounds(self):
-        arming.arm(5)
-        arming.disarm()
-        self.assertFalse(arming.status()[0])
-        for minutes in (0, -1, arming.MAX_MINUTES + 1, True, "10"):
-            with self.subTest(minutes=minutes), self.assertRaises(ValueError):
-                arming.arm(minutes)
-
-    def test_corrupt_window_file_reads_as_unarmed(self):
-        self.path.write_text("not json")
-        self.assertFalse(arming.status()[0])
-
-
 class LiveLimitsTests(unittest.TestCase):
     def test_ceilings_cannot_be_raised_from_configuration(self):
         for data in ({"speed_percent": 100}, {"speed_percent": 0},
@@ -448,17 +410,7 @@ class LiveRuntimeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        patcher = patch("piper_agent.arming.arm_path", return_value=self.root / "arm.json")
-        patcher.start()
-        self.addCleanup(patcher.stop)
         self.config = Config("hardware_live", self.root / "runs", "can0", "v188", "s", "w")
-
-    def test_actions_refused_while_unarmed_and_arm_is_never_constructed(self):
-        with Runtime(self.config) as runtime:
-            with self.assertRaisesRegex(RuntimeError, "not armed"):
-                runtime.act("move_joints", [0.0] * 6)
-            self.assertIsNone(runtime.arm)
-            self.assertFalse(runtime.status()["motion_armed"])
 
     def test_mock_mode_never_exposes_physical_actions(self):
         config = replace(self.config, mode="mock")
@@ -467,7 +419,6 @@ class LiveRuntimeTests(unittest.TestCase):
                 runtime.act("move_joints", [0.0] * 6)
 
     def test_action_budget_stops_an_episode_that_will_not_finish(self):
-        arming.arm(5)
         config = replace(self.config, live=LiveLimits(max_actions_per_episode=2))
         fake = types.SimpleNamespace(move_joints=lambda v: {"measured_joints_rad": v})
         with Runtime(config) as runtime:
@@ -491,7 +442,6 @@ class LiveRuntimeTests(unittest.TestCase):
             self.assertEqual(records[-1]["event"], "episode_done")
 
     def test_unknown_action_is_rejected_and_logged(self):
-        arming.arm(5)
         with Runtime(self.config) as runtime:
             with patch.object(Runtime, "_arm", return_value=object()):
                 with self.assertRaises(ValueError):

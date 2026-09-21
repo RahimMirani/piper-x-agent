@@ -37,8 +37,7 @@ work in the published Astra setup.
 ## Before a batch
 
 1. Workspace clear, operator at the rig, power cutoff in reach.
-2. `piper-agent arm --minutes 45` on the Pi. Motion tools are not listed at all
-   outside that window, and it expires on its own.
+2. The server pointed at `config/live.toml`, so motion tools are exposed.
 3. Cube and cup on marked positions. Tape the table — position variance between
    trials becomes noise that swamps the difference you are looking for.
 4. External camera recording. The Pi saves a frame per `observe`, which shows

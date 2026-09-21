@@ -9,7 +9,6 @@ import threading
 import time
 import uuid
 
-from . import arming
 from .arm import MockArm, ReadOnlyArm
 from .cameras import MockCameras, OrbbecCameras
 
@@ -88,11 +87,8 @@ class Runtime:
         return self.cameras
 
     def status(self):
-        armed, _, remaining = arming.status()
         return {"mode": self.config.mode, "run_id": self.run_id,
                 "physical_motion_supported": self.live,
-                "motion_armed": armed if self.live else False,
-                "motion_arm_seconds_remaining": round(remaining, 1) if self.live and armed else 0.0,
                 "actions_used": self.actions,
                 "action_budget": self.config.live.max_actions_per_episode if self.live else None,
                 "camera_roles": ["scene", "wrist"],
@@ -150,13 +146,10 @@ class Runtime:
                 raise
 
     def act(self, action, value=None):
-        """Execute one bounded physical command inside an armed window."""
+        """Execute one bounded physical command."""
         with self.mutex:
             if not self.live:
                 raise RuntimeError("Physical motion requires mode = \"hardware_live\"")
-            # Re-check on every call: a window opened before this session can
-            # expire part way through it.
-            remaining = arming.require_armed()
             # An episode budget, enforced here rather than per-agent: the CLIs
             # have no turn limit, and a model that cannot finish should be
             # scored as out of budget rather than left grinding indefinitely.
@@ -185,7 +178,6 @@ class Runtime:
                 self.log("action_rejected", {"action": action, "value": value,
                                              "error": f"{type(exc).__name__}: {exc}"})
                 raise
-            result["arm_seconds_remaining"] = round(remaining, 1)
             result["actions_used"] = self.actions
             result["actions_remaining"] = budget - self.actions
             self.log("action", {"action": action, "value": value, "result": result})
@@ -194,9 +186,8 @@ class Runtime:
     def go_home(self):
         """Operator-driven return to the configured home pose.
 
-        Deliberately not an MCP tool and deliberately not gated on the arming
-        window: this is the harness resetting the rig between trials, not a
-        model deciding to move.
+        Deliberately not an MCP tool: this is the harness resetting the rig
+        between trials, not a model deciding to move.
         """
         with self.mutex:
             if not self.live:

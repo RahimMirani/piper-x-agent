@@ -52,24 +52,6 @@ mkdir -p "$OUT"
 
 MCP_CMD="ssh -T -o BatchMode=yes $PI_HOST bash $PI_CHECKOUT/scripts/pi-mcp.sh $PI_CONFIG"
 
-# The arm must already be armed by an operator at the rig, and the window has to
-# outlast the whole batch. Check before burning trials on refusals.
-echo "Checking the arming window on $PI_HOST ..."
-ARM_STATUS=$(ssh -T -o BatchMode=yes "$PI_HOST" \
-  "$PI_CHECKOUT/.venv/bin/piper-agent arm-status" 2>/dev/null || echo '{"armed": false}')
-echo "$ARM_STATUS"
-if ! grep -q '"armed": true' <<<"$ARM_STATUS"; then
-  cat >&2 <<'WARN'
-
-The rig is NOT armed. Motion tools will not appear and every trial will fail.
-Run this on the Pi first, at the rig, with the workspace clear:
-
-    .venv/bin/piper-agent arm --minutes 45 --note "cube-in-cup trials"
-
-WARN
-  exit 1
-fi
-
 cat > "$OUT/batch.json" <<JSON
 {
   "task": "$TASK",

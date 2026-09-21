@@ -1,9 +1,8 @@
 # Copy to config/live.toml on the Pi. THIS MODE MOVES THE ARM.
 #
-# Motion tools still require an operator to open a window with
-# `piper-agent arm --minutes N` at the rig; this file only sets the bounds
-# those commands are checked against. The ceilings in config.py cannot be
-# raised from here.
+# Selecting this mode is what exposes the motion tools, so point the MCP server
+# at it deliberately. This file sets the bounds every command is checked
+# against; the ceilings in config.py cannot be raised from here.
 mode = "hardware_live"
 run_directory = "../runs"
 camera_max_age_s = 1.0

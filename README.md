@@ -12,10 +12,9 @@ processing, and collision-aware planning are not implemented.
 
 Physical motion is available two ways. Supervised smoke tests run from the CLI
 behind `--confirm-motion-test`. Bounded model-driven motion runs in
-`hardware_live` mode, where **motion tools are listed only while an operator has
-armed the rig** with `piper-agent arm --minutes N`; the window expires on its
-own, and no configuration flag opens it. In `mock` and `hardware_readonly` modes
-no MCP tool moves the arm.
+`hardware_live` mode, which has to be selected explicitly by pointing the server
+at a live configuration. In `mock` and `hardware_readonly` modes no MCP tool
+moves the arm.
 
 ```text
 Mac: Codex with Astra          OpenAI cloud: model inference
@@ -68,7 +67,7 @@ motion and gripper checks.
 | `simulate_gripper` | Mock aperture update | Not exposed |
 | `simulate_stop` | Latched mock stop | Not exposed; cannot stop a real arm |
 
-In `hardware_live` mode, and only inside an armed window, five more tools appear:
+In `hardware_live` mode five more tools appear:
 `move_joints` and `move_to_pose` take **absolute** targets and move at most one
 bounded step per call, `set_gripper` sets an absolute jaw width, `stop` requests
 a damped software stop, and `done` records the model's own end-of-episode claim.

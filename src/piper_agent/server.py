@@ -13,8 +13,7 @@ _READONLY_INSTRUCTIONS = (
 
 _LIVE_INSTRUCTIONS = (
     "Call robot_status first, then observe before and after every movement. This mode moves a "
-    "REAL arm. Motion tools accept commands only while an operator has armed the rig, and the "
-    "window expires. All targets are ABSOLUTE, never relative, and each call may move the arm "
+    "REAL arm. All targets are ABSOLUTE, never relative, and each call may move the arm "
     "only a short bounded step, so reach a distant pose with several calls. "
     "A refused command means the target was out of range or too far in one step; nothing moved, "
     "so correct the target and retry rather than repeating it. "
@@ -54,33 +53,28 @@ def create_server(runtime):
         tool("observe_cameras", "Get both fresh RGB images without connecting to the arm. Use for camera setup."),
     ]
     if live:
-        # Motion tools are listed only when an operator has already armed the
-        # rig, so an unarmed session cannot see a way to move the arm. Every
-        # call re-checks the window, because it can expire mid-session.
-        from . import arming
-        if arming.status()[0]:
-            catalog.extend([
-                tool("move_joints",
-                     "Move to an ABSOLUTE six-joint pose in radians. Bounded step per call; "
-                     "out-of-range targets are refused, not clamped. Returns the MEASURED pose.",
-                     {"joints_rad": {"type": "array", "items": {"type": "number"},
-                                     "minItems": 6, "maxItems": 6}}, False),
-                tool("move_to_pose",
-                     "Move the flange to an ABSOLUTE Cartesian pose [x, y, z, roll, pitch, yaw] "
-                     "in the arm base frame (metres, radians). Bounded step per call; poses "
-                     "outside the configured workspace are refused. Returns the MEASURED pose.",
-                     {"pose": {"type": "array", "items": {"type": "number"},
-                               "minItems": 6, "maxItems": 6}}, False),
-                tool("set_gripper",
-                     "Set the jaw opening in metres at a low force. Returns the MEASURED width.",
-                     {"width_m": {"type": "number", "minimum": 0, "maximum": 0.07}}, False),
-                tool("stop",
-                     "Request a damped software stop. NOT a hardware emergency stop.", readonly=False),
-                tool("done",
-                     "Declare the episode finished. Record whether you believe you succeeded and "
-                     "why. A human grader reviews the video; this does not decide the outcome.",
-                     {"success": {"type": "boolean"},
-                      "note": {"type": "string"}}, False, required=["success"]),
+        catalog.extend([
+            tool("move_joints",
+                 "Move to an ABSOLUTE six-joint pose in radians. Bounded step per call; "
+                 "out-of-range targets are refused, not clamped. Returns the MEASURED pose.",
+                 {"joints_rad": {"type": "array", "items": {"type": "number"},
+                                 "minItems": 6, "maxItems": 6}}, False),
+            tool("move_to_pose",
+                 "Move the flange to an ABSOLUTE Cartesian pose [x, y, z, roll, pitch, yaw] "
+                 "in the arm base frame (metres, radians). Bounded step per call; poses "
+                 "outside the configured workspace are refused. Returns the MEASURED pose.",
+                 {"pose": {"type": "array", "items": {"type": "number"},
+                           "minItems": 6, "maxItems": 6}}, False),
+            tool("set_gripper",
+                 "Set the jaw opening in metres at a low force. Returns the MEASURED width.",
+                 {"width_m": {"type": "number", "minimum": 0, "maximum": 0.07}}, False),
+            tool("stop",
+                 "Request a damped software stop. NOT a hardware emergency stop.", readonly=False),
+            tool("done",
+                 "Declare the episode finished. Record whether you believe you succeeded and "
+                 "why. A human grader reviews the video; this does not decide the outcome.",
+                 {"success": {"type": "boolean"},
+                  "note": {"type": "string"}}, False, required=["success"]),
             ])
     if runtime.config.mode == "mock":
         catalog.extend([
