@@ -104,6 +104,12 @@ def require_valid_pose_angles(pose):
             )
 
 
+class ArmFault(RuntimeError):
+    """Something is actually wrong with the arm: a collision, a comms error, a
+    brake still engaged. These are the only cases where dropping holding torque
+    is the right response; everything else should hold position instead."""
+
+
 class CommandRejected(RuntimeError):
     """The controller declined the command. The arm itself is healthy.
 
@@ -174,7 +180,7 @@ def assert_no_faults(robot, stage):
             f"The controller refused the command ({reason}) {stage}. Nothing moved and the arm "
             "is healthy; the target is not reachable from here. Try a nearer or different pose."
         )
-    raise RuntimeError(f"Arm reported faults {faults} {stage}")
+    raise ArmFault(f"Arm reported faults {faults} {stage}")
 
 
 def joint_feedback(robot, timeout):
@@ -345,6 +351,14 @@ def connect_arm(config):
 
 def enable_and_baseline(robot, speed_percent):
     """Enable at low speed, wait for a settled pose, return the commandable pose."""
+    # electronic_emergency_stop latches, and the latch survives disconnection.
+    # A stop left over from an earlier session would otherwise refuse every
+    # command in this one, and only an operator running home could clear it.
+    # Starting a new session is the deliberate human act that clears it.
+    status = robot.get_arm_status()
+    if status is not None and int(getattr(status.msg, "arm_status", 0) or 0) == 0x01:
+        robot.reset()
+        time.sleep(1.0)
     assert_no_faults(robot, "before enabling")
     # Explicitly request a low speed. No gripper or firmware/configuration
     # operations are involved.

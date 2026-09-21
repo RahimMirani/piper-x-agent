@@ -396,10 +396,30 @@ class LiveArmBoundsTests(unittest.TestCase):
         with self.assertRaises(CommandRejected):
             assert_no_faults(robot_at(0x02), "now")
         # A collision is a real fault and must not be downgraded.
-        with self.assertRaises(RuntimeError) as caught:
+        from piper_agent.sdk_motion import ArmFault
+        with self.assertRaises(ArmFault):
             assert_no_faults(robot_at(0x07), "now")
-        self.assertNotIsInstance(caught.exception, CommandRejected)
         assert_no_faults(robot_at(0x00), "now")
+
+    def test_a_latched_stop_from_an_earlier_session_is_cleared(self):
+        # electronic_emergency_stop latches and survives disconnection, so a
+        # stop left by a previous episode refused every command in the next one
+        # until an operator intervened. That bricked three sessions in a row.
+        from piper_agent.sdk_motion import enable_and_baseline
+        calls = []
+        states = iter([0x01, 0x00, 0x00, 0x00])
+        robot = types.SimpleNamespace(
+            get_arm_status=lambda: types.SimpleNamespace(msg=types.SimpleNamespace(
+                err_status=types.SimpleNamespace(joint_1_angle_limit=False),
+                arm_status=next(states, 0x00), err_code=0)),
+            reset=lambda: calls.append("reset"),
+            set_speed_percent=lambda p: calls.append("speed"),
+            enable=lambda: calls.append("enable"),
+            get_joints_enable_status_list=lambda: [True] * 6)
+        with patch("piper_agent.sdk_motion.stable_joint_feedback", return_value=([0.0] * 6, 1)), \
+                patch("piper_agent.sdk_motion.time.sleep"):
+            enable_and_baseline(robot, 10)
+        self.assertEqual(calls[0], "reset")
 
     def test_unreachable_cartesian_pose_is_reported_not_waited_out(self):
         # From the home corner move_l has no IK solution and simply ignores the

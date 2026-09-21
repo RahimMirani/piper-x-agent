@@ -8,7 +8,7 @@ call small, they do not know where the table is.
 
 import time
 
-from .sdk_motion import (CommandRejected, assert_no_faults, commandable_pose, connect_arm,
+from .sdk_motion import (ArmFault, CommandRejected, assert_no_faults, commandable_pose, connect_arm,
                          enable_and_baseline, flange_pose_feedback, gripper_observation,
                          gripper_sample, joint_feedback, require_in_joint_limits,
                          require_valid_pose_angles, validate_six, wait_pose_target,
@@ -115,12 +115,14 @@ class LiveArm:
         try:
             reached = wait_target(self.robot, target, _MOVE_TIMEOUT_S,
                                   tolerance=_JOINT_TOLERANCE_RAD)
-        except (TimeoutError, CommandRejected):
-            # Neither is an emergency: the arm is fine and still holding a load.
-            self._hold_here()
+        except ArmFault:
+            # Genuinely faulted: the vendor stop is the right response.
+            self._damped_stop()
             raise
         except BaseException:
-            self._damped_stop()
+            # Everything else - a timeout, a refused target, an aborted swing -
+            # leaves a healthy arm that may be holding a load. Hold, never drop.
+            self._hold_here()
             raise
         return {"commanded_joints_rad": target,
                 "start_joints_rad": start,
@@ -170,12 +172,14 @@ class LiveArm:
                                        start_joints=start_joints,
                                        max_joint_excursion_rad=self.limits.max_joint_step_rad,
                                        start_pose=start)
-        except (TimeoutError, CommandRejected):
-            # Neither is an emergency: the arm is fine and still holding a load.
-            self._hold_here()
+        except ArmFault:
+            # Genuinely faulted: the vendor stop is the right response.
+            self._damped_stop()
             raise
         except BaseException:
-            self._damped_stop()
+            # Everything else - a timeout, a refused target, an aborted swing -
+            # leaves a healthy arm that may be holding a load. Hold, never drop.
+            self._hold_here()
             raise
         joints, _ = joint_feedback(self.robot, 2.0)
         return {"commanded_pose": target,
@@ -258,11 +262,11 @@ class LiveArm:
             try:
                 reached = wait_target(self.robot, waypoint, _MOVE_TIMEOUT_S,
                                       tolerance=_JOINT_TOLERANCE_RAD)
-            except (TimeoutError, CommandRejected):
-                self._hold_here()
+            except ArmFault:
+                self._damped_stop()
                 raise
             except BaseException:
-                self._damped_stop()
+                self._hold_here()
                 raise
             legs.append({"waypoint_rad": waypoint,
                          "max_error_rad": reached["max_error_rad"],
