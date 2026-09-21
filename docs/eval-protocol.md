@@ -65,9 +65,22 @@ checkout measures that file.
 
 The launcher restricts the agent to the arm's MCP tools. Without that, a coding
 agent handed a hard manipulation problem will reasonably decide to write a Python
-script against the SDK directly — bypassing every bound in this repo. The Pi's
-per-user `ProcessLock` is the backstop: the MCP server holds the hardware for the
-whole session, so a stray script cannot also grab it.
+script against the SDK directly — bypassing every bound in this repo.
+
+**`--allowedTools` does not do this.** It pre-approves permissions; it does not
+remove tools. A probe run with only `--allowedTools` still had `Bash`, `Edit`,
+`Write` and the operator's unrelated MCP servers. What actually restricts Claude
+Code is `--restricted` (drops Bash and the other code-running tools, and ignores
+user, project and local settings files), `--tools ""` (drops the remaining
+built-ins) and `--strict-mcp-config` (ignores every MCP server but the one
+passed). Verified by asking a locked-down agent to run `whoami`: it reported
+having only the four read-only arm tools and no shell.
+
+Codex's flags differ and have not been verified. Probe it the same way — ask it
+to run a shell command — before trusting a Codex batch.
+
+The Pi's per-user `ProcessLock` is the backstop: the MCP server holds the
+hardware for the whole session, so a stray script cannot also grab it.
 
 ## Grading
 

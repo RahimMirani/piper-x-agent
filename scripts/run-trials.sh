@@ -119,16 +119,28 @@ for i in $(seq 1 "$TRIALS"); do
   set +e
   case "$AGENT" in
     claude)
-      # --allowedTools is an allowlist: only the MCP tools, so the agent cannot
-      # fall back to Bash and drive the SDK directly.
+      # --allowedTools alone does NOT restrict the tool surface; it only
+      # pre-approves permissions. A probe run with it still had Bash, Edit,
+      # Write and the user's other MCP servers, any of which lets the agent
+      # bypass every bound in this project. The restriction is:
+      #   --restricted        drop Bash and the other code-running tools, and
+      #                       ignore user/project/local settings files
+      #   --tools ""          drop the remaining built-ins (Read, Write, Edit)
+      #   --strict-mcp-config ignore every MCP server except the one below
+      # --allowedTools then just avoids permission prompts on the arm tools.
       (cd "$WORKDIR" && claude -p "$(cat "$PROMPT_FILE")" \
           --output-format json \
+          --restricted --strict-mcp-config --tools "" \
           --mcp-config "{\"mcpServers\":{\"piper-x\":{\"command\":\"ssh\",\"args\":[\"-T\",\"-o\",\"BatchMode=yes\",\"$PI_HOST\",\"bash $PI_CHECKOUT/scripts/pi-mcp.sh $PI_CONFIG\"]}}}" \
           --allowedTools "mcp__piper-x__robot_status,mcp__piper-x__read_arm_state,mcp__piper-x__observe,mcp__piper-x__observe_cameras,mcp__piper-x__move_joints,mcp__piper-x__move_to_pose,mcp__piper-x__set_gripper,mcp__piper-x__stop,mcp__piper-x__done" \
           ${MODEL:+--model "$MODEL"} \
         ) > "$TRIAL_DIR/transcript.json" 2> "$TRIAL_DIR/stderr.log"
       ;;
     codex)
+      # Codex needs the equivalent lockdown before a real batch: confirm from a
+      # probe run that it cannot reach a shell, and that only the piper-x server
+      # is loaded. Its flags differ from Claude Code's, so do not assume the
+      # ones above transfer.
       (cd "$WORKDIR" && codex exec "$(cat "$PROMPT_FILE")" \
           --json ${MODEL:+--model "$MODEL"} \
         ) > "$TRIAL_DIR/transcript.json" 2> "$TRIAL_DIR/stderr.log"
