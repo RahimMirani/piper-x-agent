@@ -10,9 +10,12 @@ lateral and gripper smoke tests have now been run on the physical arm; see the
 [arm commissioning record](docs/pi-motion-check.md). Calibration, depth
 processing, and collision-aware planning are not implemented.
 
-Physical motion is reachable only from the CLI, only with `--confirm-motion-test`,
-and only in `hardware_readonly` mode. **No MCP tool moves the arm**, so the model
-cannot command motion in this release, and no configuration flag changes that.
+Physical motion is available two ways. Supervised smoke tests run from the CLI
+behind `--confirm-motion-test`. Bounded model-driven motion runs in
+`hardware_live` mode, where **motion tools are listed only while an operator has
+armed the rig** with `piper-agent arm --minutes N`; the window expires on its
+own, and no configuration flag opens it. In `mock` and `hardware_readonly` modes
+no MCP tool moves the arm.
 
 ```text
 Mac: Codex with Astra          OpenAI cloud: model inference
@@ -65,6 +68,15 @@ motion and gripper checks.
 | `simulate_gripper` | Mock aperture update | Not exposed |
 | `simulate_stop` | Latched mock stop | Not exposed; cannot stop a real arm |
 
+In `hardware_live` mode, and only inside an armed window, five more tools appear:
+`move_joints` and `move_to_pose` take **absolute** targets and move at most one
+bounded step per call, `set_gripper` sets an absolute jaw width, `stop` requests
+a damped software stop, and `done` records the model's own end-of-episode claim.
+Out-of-range targets are refused rather than clamped, and every call returns the
+**measured** result rather than the commanded one. There is no collision
+checking: the step limits keep one call small, they do not know where the table
+is.
+
 ### Supervised motion tests (CLI only, not MCP tools)
 
 ```bash
@@ -78,6 +90,14 @@ against advancing SDK feedback, and returns to the starting pose. They leave the
 arm enabled and holding, because disabling a raised arm lets it drop. Run them
 only with the workspace clear and an operator at the rig. There is no collision
 checking; `electronic_emergency_stop()` is not a hardware E-stop.
+
+### Evaluating models on the arm
+
+`hardware_live` exists to compare agents driving the same arm through the same
+tools. `scripts/run-trials.sh` runs a batch of trials, each in a fresh session in
+an empty directory, restricted to the arm's MCP tools; `scripts/grade-trials.py`
+builds a grading sheet a human fills in from video. The method, and the ways it
+can mislead, are in [the evaluation protocol](docs/eval-protocol.md).
 
 Hardware SDKs are imported only when their tools are used. Startup never enables,
 homes, re-zeros, changes modes, clears faults, or modifies the gripper. Shutdown

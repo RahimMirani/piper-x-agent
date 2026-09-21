@@ -11,6 +11,9 @@
 - Core tests and an MCP protocol test; GitHub Actions configuration.
 
 - Supervised CLI-only motion and gripper smoke tests behind `--confirm-motion-test`.
+- A `hardware_live` adapter with absolute, bounded, feedback-verified commands,
+  exposed over MCP only inside an operator's time-boxed arming window.
+- Trial launcher and grading sheet for comparing agents on the same arm.
 
 Implemented is not the same as hardware-validated. The Pi installation, full
 software tests, and short camera-only RGB/MCP sessions have been checked; see
@@ -18,7 +21,9 @@ software tests, and short camera-only RGB/MCP sessions have been checked; see
 single-joint move, a lateral sweep and a gripper open/close have now also been
 measured on the physical arm; see [the arm commissioning record](pi-motion-check.md).
 Calibration, depth, joint signs/zeros for joints 2-6, grasping and any
-collision-aware motion remain unverified.
+collision-aware motion remain unverified. The live adapter's bounds are unit
+tested, but no joint other than joint 1 has been commanded on hardware and
+`move_to_pose` has never run on the physical arm.
 
 ## Verify on the Pi before connecting equipment
 
