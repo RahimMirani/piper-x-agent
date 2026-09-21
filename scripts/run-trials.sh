@@ -10,7 +10,7 @@ AGENT=claude
 TRIALS=20
 TASK=cube-in-cup
 OUT=""
-PI_HOST="${PI_HOST:-piper-pi}"
+PI_HOST="${PI_HOST:-pi}"
 PI_CHECKOUT="${PI_CHECKOUT:-/home/rahim/piper-x-agent}"
 PI_CONFIG="${PI_CONFIG:-config/live.toml}"
 MODEL="${MODEL:-}"
@@ -20,7 +20,7 @@ usage() {
 Usage: scripts/run-trials.sh [--agent claude|codex] [--trials N] [--task NAME] [--out DIR] [--model ID]
 
 Environment:
-  PI_HOST      ssh alias for the Pi           (default: piper-pi)
+  PI_HOST      ssh alias for the Pi           (default: pi)
   PI_CHECKOUT  absolute repo path on the Pi   (default: /home/rahim/piper-x-agent)
   PI_CONFIG    config passed to pi-mcp.sh     (default: config/live.toml)
 USAGE

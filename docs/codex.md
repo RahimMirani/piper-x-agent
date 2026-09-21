@@ -10,8 +10,8 @@ Set up SSH key authentication and verify the Pi's host key normally. Example
 alias in your Mac's `~/.ssh/config` (replace the hostname and username):
 
 ```sshconfig
-Host piper-pi
-    HostName raspberrypi.local
+Host pi
+    HostName YOUR_PI_HOSTNAME
     User YOUR_PI_USER
     IdentityFile ~/.ssh/id_ed25519
     ServerAliveInterval 15
@@ -21,7 +21,7 @@ Host piper-pi
 Verify an ordinary SSH login first, then:
 
 ```bash
-ssh -T -o BatchMode=yes piper-pi 'uname -m'
+ssh -T -o BatchMode=yes pi 'uname -m'
 ```
 
 Keep shell startup files quiet for noninteractive SSH. MCP uses stdout for JSON
@@ -33,7 +33,7 @@ After the Pi installation, run this on the Mac. Replace `/home/YOUR_PI_USER` wit
 the actual absolute path to the Pi checkout:
 
 ```bash
-codex mcp add piper-x -- ssh -T -o BatchMode=yes piper-pi 'bash /home/YOUR_PI_USER/piper-x-agent/scripts/pi-mcp.sh config/mock.toml'
+codex mcp add piper-x -- ssh -T -o BatchMode=yes pi 'bash /home/YOUR_PI_USER/piper-x-agent/scripts/pi-mcp.sh config/mock.toml'
 ```
 
 Or configure the equivalent MCP entry in the desktop app. Example TOML:
@@ -41,7 +41,7 @@ Or configure the equivalent MCP entry in the desktop app. Example TOML:
 ```toml
 [mcp_servers.piper-x]
 command = "ssh"
-args = ["-T", "-o", "BatchMode=yes", "piper-pi", "bash /home/YOUR_PI_USER/piper-x-agent/scripts/pi-mcp.sh config/mock.toml"]
+args = ["-T", "-o", "BatchMode=yes", "pi", "bash /home/YOUR_PI_USER/piper-x-agent/scripts/pi-mcp.sh config/mock.toml"]
 startup_timeout_sec = 30
 tool_timeout_sec = 30
 ```
