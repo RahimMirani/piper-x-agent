@@ -115,6 +115,9 @@ class LiveArm:
         try:
             reached = wait_target(self.robot, target, _MOVE_TIMEOUT_S,
                                   tolerance=_JOINT_TOLERANCE_RAD)
+        except TimeoutError:
+            self._hold_here()
+            raise
         except BaseException:
             self._damped_stop()
             raise
@@ -166,6 +169,9 @@ class LiveArm:
                                        start_joints=start_joints,
                                        max_joint_excursion_rad=self.limits.max_joint_step_rad,
                                        start_pose=start)
+        except TimeoutError:
+            self._hold_here()
+            raise
         except BaseException:
             self._damped_stop()
             raise
@@ -250,6 +256,9 @@ class LiveArm:
             try:
                 reached = wait_target(self.robot, waypoint, _MOVE_TIMEOUT_S,
                                       tolerance=_JOINT_TOLERANCE_RAD)
+            except TimeoutError:
+                self._hold_here()
+                raise
             except BaseException:
                 self._damped_stop()
                 raise
@@ -265,6 +274,26 @@ class LiveArm:
             self.robot.electronic_emergency_stop()
         except Exception:
             pass
+
+    def _hold_here(self):
+        """Halt by commanding the pose the arm is already in, keeping torque on.
+
+        electronic_emergency_stop releases the trajectory AND the holding
+        torque, so a raised arm sags under gravity. That is right for a fault
+        and wrong for a move that merely failed to converge: the arm was fine,
+        it just did not arrive. Commanding the measured pose stops the motion
+        and holds the arm where it is.
+        """
+        try:
+            current, _ = joint_feedback(self.robot, 2.0)
+            self.robot.set_motion_mode("j")
+            self.robot.move_j(current)
+            return current
+        except Exception:
+            # If the arm will not even report its position, fall back to the
+            # vendor stop; sagging beats an uncommanded trajectory continuing.
+            self._damped_stop()
+            return None
 
     def stop(self):
         """Vendor damped stop. This is software, and not a hardware E-stop."""

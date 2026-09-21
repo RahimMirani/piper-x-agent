@@ -39,6 +39,19 @@ _GRIPPER_FAULT_FLAGS = ("voltage_too_low", "motor_overheating", "driver_overcurr
                         "driver_overheating", "sensor_status", "driver_error_status")
 
 
+def angle_difference(a, b):
+    """Smallest signed difference between two angles, across the +/-pi seam.
+
+    Orientation angles wrap: a roll of -3.140 and one of +3.14128 are the same
+    orientation about a thousandth of a radian apart, but plain subtraction
+    calls them 6.28 rad apart and no tolerance will ever accept them. This is
+    for ORIENTATIONS only. Joint angles must keep using plain subtraction: a
+    joint at -3.14 really is a full revolution away from one at +3.14, and
+    wrapping there would call an unreached target converged.
+    """
+    return math.atan2(math.sin(a - b), math.cos(a - b))
+
+
 def joint_limits():
     return _PIPER_X_LIMITS
 
@@ -249,7 +262,7 @@ def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tol
                     "step near the base axis can demand a large joint motion."
                 )
         position_error = max(abs(a - b) for a, b in zip(pose[:3], target[:3]))
-        angle_error = max(abs(a - b) for a, b in zip(pose[3:], target[3:]))
+        angle_error = max(abs(angle_difference(a, b)) for a, b in zip(pose[3:], target[3:]))
         # A target with no IK solution from the current configuration is simply
         # ignored: the flange does not move and nothing is reported. Say so
         # promptly and actionably instead of waiting out the timeout.
@@ -276,7 +289,7 @@ def wait_pose_target(robot, target, timeout, position_tolerance=0.005, angle_tol
         if previous is None or now - previous_time >= _SETTLE_INTERVAL_S:
             if previous is not None and \
                     max(abs(a - b) for a, b in zip(pose[:3], previous[:3])) <= 0.0005 and \
-                    max(abs(a - b) for a, b in zip(pose[3:], previous[3:])) <= 0.005:
+                    max(abs(angle_difference(a, b)) for a, b in zip(pose[3:], previous[3:])) <= 0.005:
                 settled += 1
             else:
                 settled = 0

@@ -1,4 +1,5 @@
 from dataclasses import replace
+import math
 import json
 from pathlib import Path
 import sys
@@ -380,6 +381,27 @@ class LiveArmBoundsTests(unittest.TestCase):
         for kind, waypoint in arm.sent[1:]:
             self.assertEqual(kind, "move_j")
             self.assertLessEqual(max(abs(v) for v in waypoint), 0.5)
+
+    def test_orientation_comparison_crosses_the_pi_seam(self):
+        # Found by a model driving the arm: it requested roll -3.140 and the
+        # controller reported +3.14128 -- the same orientation, 0.0019 rad
+        # apart. Plain subtraction called it 6.28 rad and no tolerance could
+        # ever accept it, so a completed lift timed out.
+        from piper_agent.sdk_motion import angle_difference
+        self.assertAlmostEqual(abs(angle_difference(-3.140, 3.14128)), 0.00191, places=5)
+        self.assertAlmostEqual(angle_difference(0.1, -0.1), 0.2, places=9)
+        self.assertAlmostEqual(abs(angle_difference(math.pi, -math.pi)), 0.0, places=9)
+
+    def test_pose_converges_across_the_seam(self):
+        from piper_agent.sdk_motion import wait_pose_target
+        target = [0.0, 0.0, 0.2, -3.140, 0.0, 0.0]
+        robot = types.SimpleNamespace(
+            get_arm_status=lambda: None,
+            get_flange_pose=lambda: types.SimpleNamespace(
+                msg=[0.0, 0.0, 0.2, 3.14128, 0.0, 0.0], timestamp=time.time()))
+        with patch("piper_agent.sdk_motion.assert_no_faults"):
+            reached = wait_pose_target(robot, target, 5.0)
+        self.assertLess(reached["max_angle_error_rad"], 0.01)
 
     def test_arm_status_faults_are_detected(self):
         # Only err_status bits were checked before, so a collision or a rejected
