@@ -9,8 +9,8 @@ call small, they do not know where the table is.
 import time
 
 from .sdk_motion import (assert_no_faults, connect_arm, enable_and_baseline,
-                         flange_pose_feedback, gripper_sample, joint_feedback,
-                         require_in_joint_limits, require_valid_pose_angles,
+                         flange_pose_feedback, gripper_observation, gripper_sample,
+                         joint_feedback, require_in_joint_limits, require_valid_pose_angles,
                          validate_six, wait_pose_target, wait_target)
 
 _MOVE_TIMEOUT_S = 15.0
@@ -73,14 +73,15 @@ class LiveArm:
         except TimeoutError:
             pose = None
         try:
-            gripper = gripper_sample(self._effector(), "while reading state")
-        except (TimeoutError, RuntimeError):
-            gripper = None
+            gripper = gripper_observation(self._effector())
+        except Exception as exc:
+            gripper = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
         return {"source": "hardware_live",
                 "joints_rad": joints,
                 "flange_pose": pose,
-                "gripper_aperture_m": gripper["measured_width_m"] if gripper else None,
-                "gripper_homed": gripper["homed"] if gripper else None,
+                "gripper": gripper,
+                "gripper_aperture_m": gripper.get("measured_width_m"),
+                "gripper_homed": gripper.get("homed"),
                 "motors_enabled": self.ready,
                 "sdk_timestamp": stamp,
                 "sampled_at_unix_s": time.time(),
@@ -165,12 +166,17 @@ class LiveArm:
             if type(value) not in (int, float) or isinstance(value, bool) or not 0 <= value <= upper:
                 raise ValueError(f"{name} must be a number between 0 and {upper}")
         effector = self._effector()
-        before = gripper_sample(effector, "before commanding the gripper")
+        # Read, do not require, the driver state beforehand: the move message
+        # carries the enable bit, so a gripper idle since power-up is disabled
+        # until the first command. The check after the move is strict, so a
+        # gripper that failed to come up still fails loudly.
+        before = gripper_observation(effector)
         effector.move_gripper_m(value=float(width_m), force=float(force_n))
         time.sleep(_GRIPPER_SETTLE_S)
         after = gripper_sample(effector, "after commanding the gripper")
         return {"commanded_width_m": float(width_m), "commanded_force_n": float(force_n),
-                "start_width_m": before["measured_width_m"],
+                "start_width_m": before.get("measured_width_m"),
+                "driver_enabled_before": before.get("driver_enabled"),
                 "measured_width_m": after["measured_width_m"],
                 "measured_force_n": after["measured_force_n"],
                 "homed": after["homed"],

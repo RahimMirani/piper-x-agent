@@ -15,8 +15,8 @@ from piper_agent import arming
 from piper_agent.config import Config, LiveLimits
 from piper_agent.live_arm import LiveArm
 from piper_agent.runtime import ProcessLock, Runtime
-from piper_agent.sdk_motion import (commandable_pose, gripper_feedback, gripper_sample,
-                                    joint_feedback, require_in_joint_limits)
+from piper_agent.sdk_motion import (commandable_pose, gripper_feedback, gripper_observation,
+                                    gripper_sample, joint_feedback, require_in_joint_limits)
 
 
 class CoreTests(unittest.TestCase):
@@ -192,6 +192,27 @@ class MotionGuardTests(unittest.TestCase):
             with patch("piper_agent.sdk_motion.gripper_feedback", return_value=status(**flags)):
                 with self.subTest(flags=flags), self.assertRaisesRegex(RuntimeError, pattern):
                     gripper_sample(None, "now")
+
+    def test_gripper_observation_reports_a_disabled_driver_instead_of_hiding_it(self):
+        # After a power cycle the driver reads disabled until the first move
+        # command. A read must say so rather than return an empty width that
+        # looks identical to a wiring fault.
+        foc = types.SimpleNamespace(voltage_too_low=False, motor_overheating=False,
+                                    driver_overcurrent=False, driver_overheating=False,
+                                    sensor_status=False, driver_error_status=False,
+                                    driver_enable_status=False, homing_status=False)
+        frame = types.SimpleNamespace(
+            msg=types.SimpleNamespace(value=0.001, force=0.0, foc_status=foc), timestamp=1)
+        with patch("piper_agent.sdk_motion.gripper_feedback", return_value=frame):
+            observation = gripper_observation(None)
+        self.assertTrue(observation["available"])
+        self.assertFalse(observation["driver_enabled"])
+        self.assertEqual(observation["measured_width_m"], 0.001)
+
+        with patch("piper_agent.sdk_motion.gripper_feedback", side_effect=TimeoutError("no frames")):
+            unavailable = gripper_observation(None)
+        self.assertFalse(unavailable["available"])
+        self.assertIn("no frames", unavailable["reason"])
 
 
 class ArmingTests(unittest.TestCase):

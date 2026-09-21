@@ -256,6 +256,27 @@ def gripper_feedback(effector, timeout=2.0):
     raise TimeoutError("No advancing gripper feedback; check the effector CAN connection")
 
 
+def gripper_observation(effector, timeout=2.0):
+    """Non-raising gripper read for status reporting.
+
+    A read should say what the gripper's condition is, including "the driver is
+    off", rather than collapsing every problem into a missing value the caller
+    cannot tell apart from a wiring fault.
+    """
+    try:
+        status = gripper_feedback(effector, timeout)
+    except TimeoutError as exc:
+        return {"available": False, "reason": str(exc)}
+    foc = status.msg.foc_status
+    return {"available": True,
+            "measured_width_m": float(status.msg.value),
+            "measured_force_n": float(status.msg.force),
+            "driver_enabled": bool(foc.driver_enable_status),
+            "homed": bool(foc.homing_status),
+            "faults": [name for name in _GRIPPER_FAULT_FLAGS if getattr(foc, name)],
+            "timestamp": status.timestamp}
+
+
 def gripper_sample(effector, stage):
     status = gripper_feedback(effector)
     foc = status.msg.foc_status

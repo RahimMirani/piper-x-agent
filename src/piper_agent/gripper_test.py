@@ -2,7 +2,7 @@
 
 import time
 
-from .sdk_motion import connect_arm, gripper_sample
+from .sdk_motion import connect_arm, gripper_observation, gripper_sample
 
 _FORCE_N = 1.0
 _WIDTHS_M = (0.02, 0.04, 0.02)
@@ -24,7 +24,9 @@ def run_gripper_test(config):
         # gripper is never zeroed or calibrated here, so absolute width is only
         # trustworthy when the controller already reports it as homed.
         effector = robot.init_effector(robot.OPTIONS.EFFECTOR.AGX_GRIPPER)
-        baseline = gripper_sample(effector, "before commanding the gripper")
+        # Read, do not require, the driver state: the move message carries the
+        # enable bit, so a gripper idle since power-up reports disabled here.
+        baseline = gripper_observation(effector)
         steps = []
         for width in _WIDTHS_M:
             effector.move_gripper_m(value=width, force=_FORCE_N)
@@ -40,8 +42,8 @@ def run_gripper_test(config):
         return {"commanded_widths_m": list(_WIDTHS_M), "force_n": _FORCE_N,
                 "baseline": baseline, "steps": steps,
                 "measured_travel_m": travel,
-                "homed": baseline["homed"],
-                "absolute_width_verified": baseline["homed"],
+                "homed": steps[-1]["homed"],
+                "absolute_width_verified": steps[-1]["homed"],
                 "physical_motion_supported": True}
     finally:
         robot.disconnect()
