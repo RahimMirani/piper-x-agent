@@ -122,6 +122,12 @@ Three rules:
 
 ## Reading the numbers
 
+Episodes are capped by `max_actions_per_episode` in the `[live]` config, enforced
+on the Pi rather than per-agent because neither CLI has a turn limit. A model that
+hits it is told to call `done`, and the event log records `budget_exhausted` so
+grading can separate "ran out of budget" from "failed at the task". The first
+pilot ran to 64 actions without finishing, which is what the cap is for.
+
 Fix the trial count before starting. Twenty trials per model separates large
 gaps — the published Astra figures were 19/20 against 8/20 on a block-in-bowl
 task — and resolves nothing subtle. If two models land within about fifteen
