@@ -104,19 +104,32 @@ def require_valid_pose_angles(pose):
             )
 
 
-# arm_status values that mean the controller will not act on commands, or has
-# hit something. Checking only the err_status bits missed all of these — a
-# collision included. 0x00 is NORMAL and 0x08 is a teaching-drag overspeed that
-# cannot arise here.
-_BLOCKING_ARM_STATUS = {
-    0x01: "EMERGENCY_STOP",
+class CommandRejected(RuntimeError):
+    """The controller declined the command. The arm itself is healthy.
+
+    Distinguished from a hardware fault because the response differs: a rejected
+    command means nothing is wrong and the arm must keep holding its pose, while
+    a damped stop would drop the torque and let it fall.
+    """
+
+
+# The controller refused to execute, but nothing is wrong with the arm.
+_COMMAND_REJECTED_STATUS = {
     0x02: "NO_SOLUTION",
     0x03: "SINGULARITY_POINT",
     0x04: "TARGET_POS_EXCEEDS_LIMIT",
+}
+
+# Something is actually wrong. 0x00 is NORMAL and 0x08 is a teaching-drag
+# overspeed that cannot arise here.
+_HARDWARE_FAULT_STATUS = {
+    0x01: "EMERGENCY_STOP",
     0x05: "JOINT_COMMUNICATION_ERR",
     0x06: "JOINT_BRAKE_NOT_RELEASED",
     0x07: "COLLISION_OCCURRED",
 }
+
+_BLOCKING_ARM_STATUS = {**_COMMAND_REJECTED_STATUS, **_HARDWARE_FAULT_STATUS}
 
 
 def arm_faults(robot):
@@ -138,10 +151,30 @@ def arm_faults(robot):
     return faults
 
 
+def rejected_status(robot):
+    """Return the controller's refusal reason, if it declined the command."""
+    status = robot.get_arm_status()
+    if status is None:
+        return None
+    try:
+        return _COMMAND_REJECTED_STATUS.get(int(getattr(status.msg, "arm_status", 0)))
+    except (TypeError, ValueError):
+        return None
+
+
 def assert_no_faults(robot, stage):
     faults = arm_faults(robot)
-    if faults:
-        raise RuntimeError(f"Arm reported faults {faults} {stage}")
+    if not faults:
+        return
+    # A refused command is not an emergency. Raising the distinct type lets the
+    # caller hold position instead of dropping torque and letting the arm fall.
+    reason = rejected_status(robot)
+    if reason and len(faults) == 1:
+        raise CommandRejected(
+            f"The controller refused the command ({reason}) {stage}. Nothing moved and the arm "
+            "is healthy; the target is not reachable from here. Try a nearer or different pose."
+        )
+    raise RuntimeError(f"Arm reported faults {faults} {stage}")
 
 
 def joint_feedback(robot, timeout):

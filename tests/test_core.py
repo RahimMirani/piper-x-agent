@@ -379,6 +379,28 @@ class LiveArmBoundsTests(unittest.TestCase):
             with self.subTest(code=code):
                 self.assertEqual(arm_faults(robot), expected)
 
+    def test_refused_command_is_not_treated_as_an_emergency(self):
+        # TARGET_POS_EXCEEDS_LIMIT means the command was not executable, not
+        # that the arm is broken. Treating it as a fault fired a damped stop,
+        # which drops holding torque: on hardware the flange fell 17 cm while
+        # gripping a cube.
+        from piper_agent.sdk_motion import CommandRejected, assert_no_faults
+        clean = types.SimpleNamespace(joint_1_angle_limit=False)
+
+        def robot_at(code):
+            return types.SimpleNamespace(get_arm_status=lambda: types.SimpleNamespace(
+                msg=types.SimpleNamespace(err_status=clean, arm_status=code, err_code=0)))
+
+        with self.assertRaises(CommandRejected):
+            assert_no_faults(robot_at(0x04), "now")
+        with self.assertRaises(CommandRejected):
+            assert_no_faults(robot_at(0x02), "now")
+        # A collision is a real fault and must not be downgraded.
+        with self.assertRaises(RuntimeError) as caught:
+            assert_no_faults(robot_at(0x07), "now")
+        self.assertNotIsInstance(caught.exception, CommandRejected)
+        assert_no_faults(robot_at(0x00), "now")
+
     def test_unreachable_cartesian_pose_is_reported_not_waited_out(self):
         # From the home corner move_l has no IK solution and simply ignores the
         # command: no motion, no error. Without this the caller burns the whole

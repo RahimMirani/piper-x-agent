@@ -8,7 +8,7 @@ call small, they do not know where the table is.
 
 import time
 
-from .sdk_motion import (assert_no_faults, commandable_pose, connect_arm,
+from .sdk_motion import (CommandRejected, assert_no_faults, commandable_pose, connect_arm,
                          enable_and_baseline, flange_pose_feedback, gripper_observation,
                          gripper_sample, joint_feedback, require_in_joint_limits,
                          require_valid_pose_angles, validate_six, wait_pose_target,
@@ -115,7 +115,8 @@ class LiveArm:
         try:
             reached = wait_target(self.robot, target, _MOVE_TIMEOUT_S,
                                   tolerance=_JOINT_TOLERANCE_RAD)
-        except TimeoutError:
+        except (TimeoutError, CommandRejected):
+            # Neither is an emergency: the arm is fine and still holding a load.
             self._hold_here()
             raise
         except BaseException:
@@ -169,7 +170,8 @@ class LiveArm:
                                        start_joints=start_joints,
                                        max_joint_excursion_rad=self.limits.max_joint_step_rad,
                                        start_pose=start)
-        except TimeoutError:
+        except (TimeoutError, CommandRejected):
+            # Neither is an emergency: the arm is fine and still holding a load.
             self._hold_here()
             raise
         except BaseException:
@@ -256,7 +258,7 @@ class LiveArm:
             try:
                 reached = wait_target(self.robot, waypoint, _MOVE_TIMEOUT_S,
                                       tolerance=_JOINT_TOLERANCE_RAD)
-            except TimeoutError:
+            except (TimeoutError, CommandRejected):
                 self._hold_here()
                 raise
             except BaseException:
