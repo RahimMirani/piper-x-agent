@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 
+from . import arming
 from .arm import MockArm, ReadOnlyArm
 from .cameras import MockCameras, OrbbecCameras
 
@@ -50,9 +51,10 @@ class Runtime:
         self.directory = config.run_directory / self.run_id
         self.directory.mkdir(parents=True, mode=0o700)
         try:
-            if config.mode == "hardware_readonly":
+            if config.mode != "mock":
                 self.stack.enter_context(ProcessLock())
-            self.log("session_start", {"mode": config.mode, "physical_motion_supported": False})
+            self.log("session_start", {"mode": config.mode,
+                                       "physical_motion_supported": self.live})
         except BaseException:
             self.stack.close()
             raise
@@ -62,9 +64,19 @@ class Runtime:
             stream.write(json.dumps({"time_unix_s": time.time(), "event": event, "data": data},
                                     allow_nan=False) + "\n")
 
+    @property
+    def live(self):
+        return self.config.mode == "hardware_live"
+
     def _arm(self):
         if self.arm is None:
-            self.arm = MockArm() if self.config.mode == "mock" else ReadOnlyArm(self.config)
+            if self.config.mode == "mock":
+                self.arm = MockArm()
+            elif self.config.mode == "hardware_live":
+                from .live_arm import LiveArm
+                self.arm = LiveArm(self.config)
+            else:
+                self.arm = ReadOnlyArm(self.config)
             self.stack.callback(self.arm.close)
         return self.arm
 
@@ -75,10 +87,15 @@ class Runtime:
         return self.cameras
 
     def status(self):
+        armed, _, remaining = arming.status()
         return {"mode": self.config.mode, "run_id": self.run_id,
-                "physical_motion_supported": False, "camera_roles": ["scene", "wrist"],
+                "physical_motion_supported": self.live,
+                "motion_armed": armed if self.live else False,
+                "motion_arm_seconds_remaining": round(remaining, 1) if self.live and armed else 0.0,
+                "camera_roles": ["scene", "wrist"],
                 "mock_is_physics_simulation": False,
-                "hardware_connected": self.arm is not None and self.config.mode == "hardware_readonly",
+                "collision_checking": False,
+                "hardware_connected": self.arm is not None and self.config.mode != "mock",
                 "run_directory_on_server": str(self.directory)}
 
     def state(self):
@@ -128,6 +145,42 @@ class Runtime:
                 # Reject nonfinite values without allowing invalid JSON in logs.
                 self.log("mock_action_rejected", {"action": action, "error": str(exc)})
                 raise
+
+    def act(self, action, value=None):
+        """Execute one bounded physical command inside an armed window."""
+        with self.mutex:
+            if not self.live:
+                raise RuntimeError("Physical motion requires mode = \"hardware_live\"")
+            # Re-check on every call: a window opened before this session can
+            # expire part way through it.
+            remaining = arming.require_armed()
+            arm = self._arm()
+            try:
+                if action == "move_joints":
+                    result = arm.move_joints(value)
+                elif action == "move_to_pose":
+                    result = arm.move_to_pose(value)
+                elif action == "set_gripper":
+                    result = arm.set_gripper(**value)
+                elif action == "stop":
+                    result = arm.stop()
+                else:
+                    raise ValueError(f"Unknown physical action: {action}")
+            except Exception as exc:
+                self.log("action_rejected", {"action": action, "value": value,
+                                             "error": f"{type(exc).__name__}: {exc}"})
+                raise
+            result["arm_seconds_remaining"] = round(remaining, 1)
+            self.log("action", {"action": action, "value": value, "result": result})
+            return result
+
+    def declare_done(self, success, note=""):
+        """Record the model's own end-of-episode claim. Grading never trusts it."""
+        record = {"claimed_success": bool(success), "note": str(note)[:2000]}
+        with self.mutex:
+            self.log("episode_done", record)
+        return {**record, "recorded": True,
+                "note_to_model": "Recorded. A human grader reviews the video and decides the outcome."}
 
     def close(self):
         with self.mutex:

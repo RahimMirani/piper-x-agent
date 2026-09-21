@@ -1,0 +1,32 @@
+# Copy to config/live.toml on the Pi. THIS MODE MOVES THE ARM.
+#
+# Motion tools still require an operator to open a window with
+# `piper-agent arm --minutes N` at the rig; this file only sets the bounds
+# those commands are checked against. The ceilings in config.py cannot be
+# raised from here.
+mode = "hardware_live"
+run_directory = "../runs"
+camera_max_age_s = 1.0
+camera_timeout_s = 5.0
+
+[arm]
+channel = "can0"
+firmware = "v188"
+
+[cameras]
+scene_serial = "CC1N16200TF"
+wrist_serial = "CC1N16200F9"
+
+[live]
+# Speed is capped at 30 in code regardless of what is written here.
+speed_percent = 10
+# The most any single joint may move in one tool call.
+max_joint_step_rad = 0.5
+# The most the flange may travel in one move_to_pose call.
+max_cartesian_step_m = 0.10
+# Cartesian box in the ARM BASE frame, metres. move_to_pose is unavailable
+# until both are set. MEASURE THESE against your own table before enabling
+# Cartesian motion; the values below are a placeholder, not a verified
+# workspace, and a wrong box lets the arm drive into the table.
+# workspace_min_m = [0.05, -0.30, 0.02]
+# workspace_max_m = [0.55, 0.30, 0.45]

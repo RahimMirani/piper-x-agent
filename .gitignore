@@ -9,7 +9,9 @@ dist/
 .env.*
 !.env.example
 config/local.toml
+config/live.toml
 config/codex.local.toml
 runs/
+runs-eval/
 Log/
 *.whl
