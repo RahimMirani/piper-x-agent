@@ -47,6 +47,7 @@ class Runtime:
         self.arm = None
         self.cameras = None
         self.sequence = 0
+        self.actions = 0
         self.run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + uuid.uuid4().hex[:8]
         self.directory = config.run_directory / self.run_id
         self.directory.mkdir(parents=True, mode=0o700)
@@ -92,6 +93,8 @@ class Runtime:
                 "physical_motion_supported": self.live,
                 "motion_armed": armed if self.live else False,
                 "motion_arm_seconds_remaining": round(remaining, 1) if self.live and armed else 0.0,
+                "actions_used": self.actions,
+                "action_budget": self.config.live.max_actions_per_episode if self.live else None,
                 "camera_roles": ["scene", "wrist"],
                 "mock_is_physics_simulation": False,
                 "collision_checking": False,
@@ -154,6 +157,18 @@ class Runtime:
             # Re-check on every call: a window opened before this session can
             # expire part way through it.
             remaining = arming.require_armed()
+            # An episode budget, enforced here rather than per-agent: the CLIs
+            # have no turn limit, and a model that cannot finish should be
+            # scored as out of budget rather than left grinding indefinitely.
+            budget = self.config.live.max_actions_per_episode
+            if self.actions >= budget:
+                self.log("budget_exhausted", {"action": action, "budget": budget})
+                raise RuntimeError(
+                    f"Episode action budget exhausted: {budget} physical commands have already "
+                    "been issued in this session. No further motion will be accepted. "
+                    "Call done with an honest account of how far you got."
+                )
+            self.actions += 1
             arm = self._arm()
             try:
                 if action == "move_joints":
@@ -171,6 +186,8 @@ class Runtime:
                                              "error": f"{type(exc).__name__}: {exc}"})
                 raise
             result["arm_seconds_remaining"] = round(remaining, 1)
+            result["actions_used"] = self.actions
+            result["actions_remaining"] = budget - self.actions
             self.log("action", {"action": action, "value": value, "result": result})
             return result
 

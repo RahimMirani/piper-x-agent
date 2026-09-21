@@ -76,8 +76,27 @@ built-ins) and `--strict-mcp-config` (ignores every MCP server but the one
 passed). Verified by asking a locked-down agent to run `whoami`: it reported
 having only the four read-only arm tools and no shell.
 
-Codex's flags differ and have not been verified. Probe it the same way — ask it
-to run a shell command — before trusting a Codex batch.
+**Codex cannot be locked down the same way, and this was verified.** Its minimum
+is `--sandbox read-only`, which still executes shell commands: a probe asked it to
+run `whoami` and it succeeded. It also ships with `node_repl` and `cua_repl`
+enabled — a Node REPL is arbitrary code execution — plus `web.run`, `apply_patch`
+and agent spawning. `--ignore-user-config` drops those but drops the arm server
+with them, and per-server `enabled=false` overrides fail to parse.
+
+So the two conditions are not identical: Claude Code runs with no shell, Codex
+runs with one. Three consequences:
+
+- Any Claude-versus-Codex result carries a tool-surface difference alongside the
+  model difference. Say so when reporting it.
+- Codex could in principle reach the Pi over SSH and drive the SDK directly,
+  bypassing every bound here. The `ProcessLock` is the backstop, and it is held
+  for the whole episode because the MCP session stays open.
+- The asymmetry only *matters* if the shell actually gets used. `grade-trials.py`
+  flags any trial that called a tool outside the arm server as `invalid`; check
+  that column before believing any Codex number.
+
+Codex normalises the server name, so its tools are `mcp__piper_x__*` with an
+underscore where Claude Code uses `mcp__piper-x__*`. The grader accepts both.
 
 The Pi's per-user `ProcessLock` is the backstop: the MCP server holds the
 hardware for the whole session, so a stray script cannot also grab it.

@@ -34,6 +34,7 @@ class LiveLimits:
     workspace_min_m: tuple | None = None
     workspace_max_m: tuple | None = None
     home_joints_rad: tuple | None = None
+    max_actions_per_episode: int = 60
 
     def workspace_bounds(self):
         if self.workspace_min_m is None or self.workspace_max_m is None:
@@ -43,7 +44,8 @@ class LiveLimits:
     @classmethod
     def load(cls, data):
         allowed = {"speed_percent", "max_joint_step_rad", "max_cartesian_step_m",
-                   "workspace_min_m", "workspace_max_m", "home_joints_rad"}
+                   "workspace_min_m", "workspace_max_m", "home_joints_rad",
+                   "max_actions_per_episode"}
         if data.keys() - allowed:
             raise ValueError(f"Unknown live configuration key: {data.keys() - allowed}")
         speed = data.get("speed_percent", 10)
@@ -69,7 +71,10 @@ class LiveLimits:
             from .sdk_motion import require_in_joint_limits
             require_in_joint_limits([float(v) for v in home])
             home = tuple(float(v) for v in home)
-        return cls(speed, float(joint_step), float(cartesian_step), low, high, home)
+        budget = data.get("max_actions_per_episode", 60)
+        if type(budget) is not int or isinstance(budget, bool) or not 1 <= budget <= 500:
+            raise ValueError("max_actions_per_episode must be an integer from 1 to 500")
+        return cls(speed, float(joint_step), float(cartesian_step), low, high, home, budget)
 
 
 @dataclass(frozen=True)

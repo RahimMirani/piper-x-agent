@@ -412,6 +412,22 @@ class LiveRuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "hardware_live"):
                 runtime.act("move_joints", [0.0] * 6)
 
+    def test_action_budget_stops_an_episode_that_will_not_finish(self):
+        arming.arm(5)
+        config = replace(self.config, live=LiveLimits(max_actions_per_episode=2))
+        fake = types.SimpleNamespace(move_joints=lambda v: {"measured_joints_rad": v})
+        with Runtime(config) as runtime:
+            with patch.object(Runtime, "_arm", return_value=fake):
+                first = runtime.act("move_joints", [0.0] * 6)
+                self.assertEqual(first["actions_remaining"], 1)
+                runtime.act("move_joints", [0.0] * 6)
+                with self.assertRaisesRegex(RuntimeError, "budget exhausted"):
+                    runtime.act("move_joints", [0.0] * 6)
+            records = [json.loads(s) for s in (runtime.directory / "events.jsonl").read_text().splitlines()]
+            # Logged as its own event so grading separates "ran out of budget"
+            # from "the model failed at the task".
+            self.assertEqual(records[-1]["event"], "budget_exhausted")
+
     def test_done_is_recorded_without_deciding_the_outcome(self):
         with Runtime(self.config) as runtime:
             result = runtime.declare_done(True, "looks good")
