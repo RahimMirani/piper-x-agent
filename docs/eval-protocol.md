@@ -52,6 +52,12 @@ scripts/run-trials.sh --agent codex  --trials 20 --task cube-in-cup
 scripts/grade-trials.py runs-eval/<batch>
 ```
 
+Claude trials pass the MCP server inline, so nothing needs registering. Codex
+trials do not: `codex exec` has no equivalent flag, so register the server once
+with `codex mcp add` before the first Codex batch, pointing at `config/live.toml`.
+Both paths need key-based SSH, since the agent spawns the connection itself with
+no terminal to answer a password prompt.
+
 Every trial gets a fresh session in an empty temporary directory. That is not a
 detail: **agents read `CLAUDE.md` and `AGENTS.md` from their working tree**, and
 this repo's `AGENTS.md` tells an agent not to move an arm. A trial run inside the

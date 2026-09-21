@@ -19,6 +19,12 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: scripts/run-trials.sh [--agent claude|codex] [--trials N] [--task NAME] [--out DIR] [--model ID]
 
+Prerequisite for --agent codex: register the MCP server once, because codex exec
+takes no inline MCP config the way claude -p does:
+
+  codex mcp add piper-x -- ssh -T -o BatchMode=yes pi \
+    'bash /home/rahim/piper-x-agent/scripts/pi-mcp.sh config/live.toml'
+
 Environment:
   PI_HOST      ssh alias for the Pi           (default: pi)
   PI_CHECKOUT  absolute repo path on the Pi   (default: /home/rahim/piper-x-agent)
