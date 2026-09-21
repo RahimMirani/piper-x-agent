@@ -11,10 +11,12 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from piper_agent.arm import MockArm, ReadOnlyArm
 from piper_agent.cameras import Frame
-from piper_agent.config import Config
-from piper_agent.gripper_test import _gripper_feedback, _sample
-from piper_agent.motion_test import _commandable_pose, _joint_feedback
+from piper_agent import arming
+from piper_agent.config import Config, LiveLimits
+from piper_agent.live_arm import LiveArm
 from piper_agent.runtime import ProcessLock, Runtime
+from piper_agent.sdk_motion import (commandable_pose, gripper_feedback, gripper_sample,
+                                    joint_feedback, require_in_joint_limits)
 
 
 class CoreTests(unittest.TestCase):
@@ -134,7 +136,7 @@ class MotionGuardTests(unittest.TestCase):
         # boundaries with motors off. move_j clamps silently, so the test must
         # command the clamped pose knowingly.
         measured = [0.0856, -0.0383, 0.0403, 0.6324, 0.0254, -0.0808]
-        pose, shift = _commandable_pose(measured)
+        pose, shift = commandable_pose(measured)
         self.assertEqual(pose[1], 0.0)
         self.assertEqual(pose[2], 0.0)
         self.assertAlmostEqual(shift[1], 0.0383)
@@ -144,7 +146,7 @@ class MotionGuardTests(unittest.TestCase):
     def test_pose_far_outside_limits_is_refused(self):
         measured = [0.0, -0.4, 0.0, 0.0, 0.0, 0.0]
         with self.assertRaisesRegex(RuntimeError, "joint 2"):
-            _commandable_pose(measured)
+            commandable_pose(measured)
 
     def test_joint_feedback_requires_a_frame_published_during_the_call(self):
         # A cached frame can predate the command under test; only an advancing
@@ -152,25 +154,25 @@ class MotionGuardTests(unittest.TestCase):
         stamps = iter([5, 5, 5, 7])
         robot = types.SimpleNamespace(
             get_joint_angles=lambda: types.SimpleNamespace(msg=[0.5] * 6, timestamp=next(stamps)))
-        with patch("piper_agent.motion_test.time.sleep"):
-            joints, stamp = _joint_feedback(robot, 2.0)
+        with patch("piper_agent.sdk_motion.time.sleep"):
+            joints, stamp = joint_feedback(robot, 2.0)
         self.assertEqual((joints, stamp), ([0.5] * 6, 7))
 
     def test_joint_feedback_rejects_frozen_feedback(self):
         robot = types.SimpleNamespace(
             get_joint_angles=lambda: types.SimpleNamespace(msg=[0.0] * 6, timestamp=1))
-        with patch("piper_agent.motion_test.time.monotonic", side_effect=[0, 0.1, 0.2, 9]), \
-                patch("piper_agent.motion_test.time.sleep"):
+        with patch("piper_agent.sdk_motion.time.monotonic", side_effect=[0, 0.1, 0.2, 9]), \
+                patch("piper_agent.sdk_motion.time.sleep"):
             with self.assertRaises(TimeoutError):
-                _joint_feedback(robot, 2.0)
+                joint_feedback(robot, 2.0)
 
     def test_gripper_feedback_rejects_frozen_feedback(self):
         effector = types.SimpleNamespace(
             get_gripper_status=lambda: types.SimpleNamespace(msg=None, timestamp=1))
-        with patch("piper_agent.gripper_test.time.monotonic", side_effect=[0, 0.1, 0.2, 9]), \
-                patch("piper_agent.gripper_test.time.sleep"):
+        with patch("piper_agent.sdk_motion.time.monotonic", side_effect=[0, 0.1, 0.2, 9]), \
+                patch("piper_agent.sdk_motion.time.sleep"):
             with self.assertRaises(TimeoutError):
-                _gripper_feedback(effector)
+                gripper_feedback(effector)
 
     def test_gripper_sample_rejects_driver_faults(self):
         def status(**flags):
@@ -183,13 +185,181 @@ class MotionGuardTests(unittest.TestCase):
             return types.SimpleNamespace(
                 msg=types.SimpleNamespace(value=0.02, force=0.1, foc_status=foc), timestamp=1)
 
-        with patch("piper_agent.gripper_test._gripper_feedback", return_value=status()):
-            self.assertEqual(_sample(None, "now")["measured_width_m"], 0.02)
+        with patch("piper_agent.sdk_motion.gripper_feedback", return_value=status()):
+            self.assertEqual(gripper_sample(None, "now")["measured_width_m"], 0.02)
         for flags, pattern in (({"driver_overcurrent": True}, "driver_overcurrent"),
                                ({"driver_enable_status": False}, "not enabled")):
-            with patch("piper_agent.gripper_test._gripper_feedback", return_value=status(**flags)):
+            with patch("piper_agent.sdk_motion.gripper_feedback", return_value=status(**flags)):
                 with self.subTest(flags=flags), self.assertRaisesRegex(RuntimeError, pattern):
-                    _sample(None, "now")
+                    gripper_sample(None, "now")
+
+
+class ArmingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        path = Path(self.temp.name) / "arm.json"
+        patcher = patch("piper_agent.arming.arm_path", return_value=path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.path = path
+
+    def test_unarmed_by_default_and_motion_is_refused(self):
+        self.assertEqual(arming.status()[0], False)
+        with self.assertRaisesRegex(RuntimeError, "not armed"):
+            arming.require_armed()
+
+    def test_arming_expires_on_its_own(self):
+        arming.arm(1)
+        self.assertTrue(arming.status()[0])
+        self.assertGreater(arming.require_armed(), 0)
+        with patch("piper_agent.arming.time.time", return_value=time.time() + 3600):
+            self.assertFalse(arming.status()[0])
+            with self.assertRaises(RuntimeError):
+                arming.require_armed()
+
+    def test_disarm_and_window_bounds(self):
+        arming.arm(5)
+        arming.disarm()
+        self.assertFalse(arming.status()[0])
+        for minutes in (0, -1, arming.MAX_MINUTES + 1, True, "10"):
+            with self.subTest(minutes=minutes), self.assertRaises(ValueError):
+                arming.arm(minutes)
+
+    def test_corrupt_window_file_reads_as_unarmed(self):
+        self.path.write_text("not json")
+        self.assertFalse(arming.status()[0])
+
+
+class LiveLimitsTests(unittest.TestCase):
+    def test_ceilings_cannot_be_raised_from_configuration(self):
+        for data in ({"speed_percent": 100}, {"speed_percent": 0},
+                     {"max_joint_step_rad": 2.0}, {"max_joint_step_rad": 0},
+                     {"max_cartesian_step_m": 1.0},
+                     {"workspace_min_m": [0.1, 0.1, 0.1]},
+                     {"workspace_min_m": [0.5, 0, 0], "workspace_max_m": [0.1, 1, 1]},
+                     {"unknown": 1}):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                LiveLimits.load(data)
+
+    def test_workspace_requires_both_bounds(self):
+        limits = LiveLimits.load({})
+        self.assertIsNone(limits.workspace_bounds())
+        limits = LiveLimits.load({"workspace_min_m": [0, -1, 0], "workspace_max_m": [1, 1, 1]})
+        self.assertEqual(limits.workspace_bounds(), ((0.0, -1.0, 0.0), (1.0, 1.0, 1.0)))
+
+    def test_live_section_rejected_outside_live_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "c.toml"
+            path.write_text('mode="hardware_readonly"\n[live]\nspeed_percent=10\n'
+                            '[cameras]\nscene_serial="a"\nwrist_serial="b"')
+            with self.assertRaisesRegex(ValueError, "hardware_live"):
+                Config.load(path)
+
+
+class LiveArmBoundsTests(unittest.TestCase):
+    """Bounds checks run before anything is sent to the arm."""
+
+    def _arm(self, **limit_kwargs):
+        arm = LiveArm.__new__(LiveArm)
+        arm.limits = LiveLimits(**limit_kwargs)
+        arm.ready = True
+        arm.enable_baseline = {}
+        arm.sent = []
+        arm.robot = types.SimpleNamespace(
+            move_j=lambda t: arm.sent.append(("move_j", t)),
+            move_l=lambda t: arm.sent.append(("move_l", t)),
+            set_motion_mode=lambda m: None)
+        return arm
+
+    def test_out_of_range_joint_target_is_refused_not_clamped(self):
+        arm = self._arm()
+        # Joint 2's range is [0, pi]; -0.5 must be refused rather than
+        # silently becoming 0.0 the way the SDK would clamp it.
+        with self.assertRaisesRegex(ValueError, "refused, not clamped"):
+            arm.move_joints([0.0, -0.5, 0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(arm.sent, [])
+
+    def test_oversized_joint_step_is_refused(self):
+        arm = self._arm(max_joint_step_rad=0.1)
+        with patch("piper_agent.live_arm.joint_feedback", return_value=([0.0] * 6, 1)):
+            with self.assertRaisesRegex(ValueError, "Refusing a"):
+                arm.move_joints([0.9, 0.1, -0.1, 0.0, 0.0, 0.0])
+        self.assertEqual(arm.sent, [])
+
+    def test_cartesian_motion_unavailable_without_a_workspace(self):
+        arm = self._arm()
+        with self.assertRaisesRegex(RuntimeError, "workspace"):
+            arm.move_to_pose([0.2, 0.0, 0.2, 0.0, 0.0, 0.0])
+        self.assertEqual(arm.sent, [])
+
+    def test_pose_outside_workspace_is_refused(self):
+        arm = self._arm(workspace_min_m=(0.0, -0.2, 0.0), workspace_max_m=(0.4, 0.2, 0.4))
+        with self.assertRaisesRegex(ValueError, "outside the configured workspace"):
+            arm.move_to_pose([0.9, 0.0, 0.2, 0.0, 0.0, 0.0])
+        self.assertEqual(arm.sent, [])
+
+    def test_malformed_and_out_of_band_arguments_are_refused(self):
+        arm = self._arm()
+        for target in ([0.0] * 5, [float("nan")] * 6, [True] * 6, "six"):
+            with self.subTest(target=target), self.assertRaises((ValueError, TypeError)):
+                arm.move_joints(target)
+        for width in (-0.01, 0.5, float("inf"), True, "wide"):
+            with self.subTest(width=width), self.assertRaises(ValueError):
+                arm.set_gripper(width)
+        self.assertEqual(arm.sent, [])
+
+    def test_in_range_target_reaches_the_sdk_unchanged(self):
+        arm = self._arm()
+        target = [0.1, 0.2, -0.3, 0.4, 0.4, 0.4]  # every joint within the default 0.5 rad step
+        with patch("piper_agent.live_arm.joint_feedback", return_value=([0.0] * 6, 1)), \
+                patch("piper_agent.live_arm.assert_no_faults"), \
+                patch("piper_agent.live_arm.wait_target",
+                      return_value={"joints_rad": target, "max_error_rad": 0.0}):
+            result = arm.move_joints(target)
+        self.assertEqual(arm.sent, [("move_j", target)])
+        self.assertEqual(result["commanded_joints_rad"], target)
+
+
+class LiveRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        patcher = patch("piper_agent.arming.arm_path", return_value=self.root / "arm.json")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.config = Config("hardware_live", self.root / "runs", "can0", "v188", "s", "w")
+
+    def test_actions_refused_while_unarmed_and_arm_is_never_constructed(self):
+        with Runtime(self.config) as runtime:
+            with self.assertRaisesRegex(RuntimeError, "not armed"):
+                runtime.act("move_joints", [0.0] * 6)
+            self.assertIsNone(runtime.arm)
+            self.assertFalse(runtime.status()["motion_armed"])
+
+    def test_mock_mode_never_exposes_physical_actions(self):
+        config = replace(self.config, mode="mock")
+        with Runtime(config) as runtime:
+            with self.assertRaisesRegex(RuntimeError, "hardware_live"):
+                runtime.act("move_joints", [0.0] * 6)
+
+    def test_done_is_recorded_without_deciding_the_outcome(self):
+        with Runtime(self.config) as runtime:
+            result = runtime.declare_done(True, "looks good")
+            self.assertTrue(result["claimed_success"])
+            self.assertIn("human grader", result["note_to_model"])
+            records = [json.loads(s) for s in (runtime.directory / "events.jsonl").read_text().splitlines()]
+            self.assertEqual(records[-1]["event"], "episode_done")
+
+    def test_unknown_action_is_rejected_and_logged(self):
+        arming.arm(5)
+        with Runtime(self.config) as runtime:
+            with patch.object(Runtime, "_arm", return_value=object()):
+                with self.assertRaises(ValueError):
+                    runtime.act("launch", None)
+            records = [json.loads(s) for s in (runtime.directory / "events.jsonl").read_text().splitlines()]
+            self.assertEqual(records[-1]["event"], "action_rejected")
 
 
 if __name__ == "__main__":
